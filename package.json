@@ -1,0 +1,14 @@
+{
+  "name": "herdr-setup",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Reusable native Herdr customizations",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=26"
+  },
+  "license": "MIT"
+}

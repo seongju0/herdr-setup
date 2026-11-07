@@ -1,0 +1,11 @@
+.DS_Store
+node_modules/
+.env
+.env.*
+!.env.example
+config.local.json
+*.log
+# Herdr writes local API definitions/editor configuration when checking a mod.
+customizations/**/gpui-kit.d.ts
+customizations/**/herdr.d.ts
+customizations/**/jsconfig.json
