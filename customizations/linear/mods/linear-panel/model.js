@@ -24,17 +24,22 @@ export function issueFilter(view, viewerId, teamId, cycleId) {
   return { team, cycle: { id: { eq: cycleId } }, or: [{ assignee }, { creator }] };
 }
 
-export function issueGroups(issues, includeClosed) {
+export function issueGroups(issues, includeClosed, groupBy = "status") {
+  const byProject = groupBy === "project";
   const all = [...new Map(issues.map(i => [i.id, i])).values()];
   const hidden = all.filter(i => CLOSED.has(i.state.type)).length;
   const groups = new Map();
   for (const issue of all) {
     if (!includeClosed && CLOSED.has(issue.state.type)) continue;
-    if (!groups.has(issue.state.id)) groups.set(issue.state.id, { state: issue.state, issues: [] });
-    groups.get(issue.state.id).issues.push(issue);
+    const key = byProject ? issue.project?.id ?? null : issue.state.id;
+    if (!groups.has(key)) groups.set(key, byProject
+      ? { name: issue.project?.name ?? "No project", project: issue.project, issues: [] }
+      : { name: issue.state.name, state: issue.state, issues: [] });
+    groups.get(key).issues.push(issue);
   }
-  const sorted = [...groups.values()].sort((a, b) =>
-    (ORDER[a.state.type] ?? 3) - (ORDER[b.state.type] ?? 3) || a.state.position - b.state.position || a.state.name.localeCompare(b.state.name));
+  const sorted = [...groups.values()].sort((a, b) => byProject
+    ? Number(!a.project) - Number(!b.project) || a.name.localeCompare(b.name)
+    : (ORDER[a.state.type] ?? 3) - (ORDER[b.state.type] ?? 3) || a.state.position - b.state.position || a.name.localeCompare(b.name));
   for (const group of sorted) group.issues.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt) || a.identifier.localeCompare(b.identifier));
   return { groups: sorted, hidden, total: all.length };
 }

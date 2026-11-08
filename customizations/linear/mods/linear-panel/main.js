@@ -27,6 +27,10 @@ export default class LinearPanel extends View {
     }
     this.view = VIEWS.includes(localStorage.getItem("view")) ? localStorage.getItem("view") : "assigned";
     this.includeClosed = localStorage.getItem("includeClosed") === "true";
+    this.grouping = {
+      assigned: localStorage.getItem("groupBy.assigned") === "project" ? "project" : "status",
+      created: localStorage.getItem("groupBy.created") === "project" ? "project" : "status",
+    };
     this.snapshots = {};
     this.loading = false;
     this.error = null;
@@ -52,6 +56,13 @@ export default class LinearPanel extends View {
     this.error = null;
     localStorage.setItem("view", view);
     if (!this.snapshots[view]) this.refresh(cx);
+    cx.notify();
+  }
+
+  setGrouping(groupBy, cx) {
+    if (this.view === "cycle" || this.grouping[this.view] === groupBy) return;
+    this.grouping[this.view] = groupBy;
+    localStorage.setItem(`groupBy.${this.view}`, groupBy);
     cx.notify();
   }
 
@@ -181,7 +192,8 @@ export default class LinearPanel extends View {
       cx.spawn(async cx => this.refresh(cx));
     }
     const snapshot = this.snapshots[this.view];
-    const { groups, hidden, total } = issueGroups(snapshot?.issues ?? [], this.includeClosed);
+    const groupBy = this.view === "cycle" ? "status" : this.grouping[this.view];
+    const { groups, hidden, total } = issueGroups(snapshot?.issues ?? [], this.includeClosed, groupBy);
     const root = v_flex().id("linear-panel-root").size_full().min_w(0).min_h(0).rounded(10).overflow_hidden()
       .border_1().border_color(t.border).bg(t.background).text_color(t.foreground).text_size(13).track_focus(this.handle)
       .on_size_change((size, cx) => {
@@ -199,6 +211,13 @@ export default class LinearPanel extends View {
         .child(div().text_size(11).text_color(t.dim).child(this.config?.team ?? "Setup")))
       .child(refresh));
     root.child(h_flex().flex_none().flex_wrap().p(7).gap(3).border_b(1).border_color(t.border).children(VIEWS.map(view => this.tab(view, t))));
+    if (this.view !== "cycle") root.child(h_flex().id("linear-grouping").flex_none().flex_wrap().px(12).py(6).gap(4).items_center()
+      .border_b(1).border_color(t.border)
+      .child(div().text_size(11).text_color(t.dim).child("Group by:"))
+      .children(["status", "project"].map(mode => div().id(`linear-group-${mode}`).px(8).py(4).rounded(6)
+        .text_size(11).text_color(groupBy === mode ? t.foreground : t.muted)
+        .bg(groupBy === mode ? t.selected : t.background).cursor_pointer().hover(s => s.bg(t.hover))
+        .on_click((_e, cx) => this.setGrouping(mode, cx)).child(mode === "status" ? "Status" : "Project"))));
     if (this.config?.demo) root.child(div().flex_none().px(12).py(6).bg(t.raised).text_size(11).text_color(t.accent).child("DEMO · Synthetic issues · No Linear connection"));
     if (this.view === "cycle" && snapshot?.cycle) {
       const cycle = snapshot.cycle;
@@ -213,9 +232,15 @@ export default class LinearPanel extends View {
       .child(div().text_size(12).text_color(t.muted).whitespace_normal().child(this.error)));
     const list = v_flex().id("linear-issue-list").flex_1().min_h(0).min_w(0).overflow_y_scrollbar().p(5);
     for (const group of groups) {
-      list.child(h_flex().px(10).pt(12).pb(5).gap(6).items_center()
-        .child(div().font_semibold().text_size(10).text_color(t.dim).child(group.state.name.toUpperCase()))
-        .child(div().text_size(10).text_color(t.dim).child(String(group.issues.length))))
+      const projectGroup = groupBy === "project";
+      list.child(h_flex().px(10).py(8).mt(10).gap(6).items_start()
+        .rounded(6).bg(t.raised).border_1().border_color(t.border)
+        .child(div().flex_1().min_w(0).whitespace_normal().font_semibold()
+          .text_size(12).text_color(t.foreground)
+          .child(projectGroup ? group.name : group.name.toUpperCase()))
+        .child(div().flex_none().text_size(11).text_color(t.muted)
+          .px(6).py(1).rounded(4).bg(t.selected)
+          .child(String(group.issues.length))))
         .children(group.issues.map(issue => this.row(issue, snapshot, t)));
     }
     if (!groups.length && !this.error) {

@@ -1,53 +1,47 @@
 # Linear in the right-hand panel
 
-A responsive native issue list beside your terminals: your assigned issues, issues you created, and your work in the configured team's active cycle. A Linear button lives beside Files and Changes. The panel is read-only; use Linear itself to edit issues.
+A responsive native list of your assigned issues, issues you created, and personal work in the team's active cycle. Open it with the Linear button beside Files and Changes; follow links to Linear to edit issues.
 
 ![Linear panel with synthetic demo issues](preview.png)
 
-[Wide responsive capture](preview-wide.png). Both images are native app captures, cropped to exclude the user's terminals and workspace.
+[Wide view](preview-wide.png). Both captures use synthetic data and are cropped to the panel.
 
-## What you see
+## Appearance
 
-- An 86px toolbar block containing a 26px Linear button, selected while the panel is shown.
-- The existing resizable right panel (368px initially, 280–900px in the installed main layout), with 10px corners and theme background/border colors.
-- Header: Linear icon/title, configured team key, Refresh/loading control.
-- Three wrapping selectors: Assigned, Created, Current cycle. Current cycle adds the returned cycle name (or number), dates and a link to the cycle.
-- Actual workflow-status sections. Started states come first, then unstarted/backlog/triage; recently updated issues first in each section. Closed states appear only when Include closed is on.
-- Below 620 logical pixels, rows stack identifier/status, wrapping title, project link and assignee. At 620px and wider, rows align an 84px identifier, flexible title/project, and 112px status/assignee column. Assignee is shown in Created/cycle, including You or Unassigned.
-- Footer: Include closed toggle, closed count, total count and last successful update time. Counts reflect fully fetched, deduplicated data, not one page.
-- Explicitly labeled Demo mode is available for synthetic previews without credentials or network access.
+- An 86px toolbar block holds a 26px Linear button, selected while the panel is open.
+- The existing right panel starts at 368px and resizes from 280–900px. It uses theme colors and 10px corners.
+- Header: Linear icon, team key, and Refresh/loading control. Selectors: Assigned, Created, Current cycle. The cycle header shows its returned name or number, dates, and link.
+- **Group by: Status | Project** appears in Assigned and Created. Status is the default; each tab remembers its choice. Current cycle uses status groups.
+- Status groups put started work first, then unstarted/backlog/triage. Project groups sort alphabetically, with **No project** last. Both grouping modes, including Current cycle, use raised, bordered headers with larger semibold names and count badges. Each heading shows its visible issue count; flat lists sort by most recently updated and retain row statuses. **Include closed** reveals terminal states.
+- Below 620 logical pixels, rows stack identifier/status, wrapping title, project, and assignee. Wider rows align an 84px identifier, flexible title/project, and 112px status/assignee column. Created/cycle show the assignee, including You or Unassigned.
+- Footer: closed toggle/count, total count, and last successful update time. Counts cover the complete, deduplicated dataset.
+- Demo mode labels its synthetic data and skips credentials/network access.
 
-## How it behaves
+## Behavior
 
-- Assigned = configured team AND assignee is authenticated viewer.
-- Created = configured team AND creator is authenticated viewer, even if assigned to someone else.
-- Current cycle = configured team AND current active cycle AND (assigned to viewer OR created by viewer). Matching both predicates never duplicates a row.
-- Load initially, when reopened, or on explicit Refresh. A new selector loads lazily; loaded selectors reuse their memory until refreshed. No background polling or terminal scanning. The active cycle is resolved again on cycle refresh.
-- Clicking an issue or project opens its HTTPS linear.app URL in the system browser. The cycle title opens the configured team's active cycle. No embedded editor, comments, mutations, repository following or agent launching.
-- Missing setup or failed initial load is shown as an error, not an empty list. Failed refresh retains the last successful list with an explicit stale notice. No active cycle is a distinct empty state.
-- The button opens/closes the existing panel stack. Existing Files/Changes behavior and per-space panel visibility memory remain. The list is user/team-global, not tied to the selected terminal or remote machine.
+- Assigned = configured team AND viewer is assignee.
+- Created = configured team AND viewer is creator, including issues assigned to others.
+- Current cycle = configured team AND active cycle AND (viewer is assignee OR creator), deduplicated.
+- Group cached issues locally when the grouping changes; preserve the existing closed filter and dataset counts.
+- Fetch on initial load, reopen, and Refresh. Tabs load lazily and retain their data until refreshed; cycle refresh resolves the active cycle again. No polling.
+- Issue/project links open HTTPS Linear URLs in the system browser. The cycle title opens the team's active cycle.
+- Initial failures show errors; failed refreshes retain the last successful list with a stale notice. An absent active cycle has its own empty state.
+- Files/Changes and per-space panel visibility are preserved. Issue data follows the configured team and viewer, independently of the selected terminal.
 
-## Built from
+## Implementation
 
-- Native GPUI modules in `mods/linear-panel/`: main.js (view/lifecycle/local Keychain and URL actions), api.js (GraphQL/pagination), model.js (config/filter/grouping/navigation checks), demo.js (synthetic fixtures), mod.json, icons/linear.svg.
-- Layout `herdr-setup-linear.json` generated from installed main: wrap tabs in a tab-bar row; append a block using mod linear-panel with props `{ "button": true }`; add a linear-panel child to the panel-body stack. Keep panel ID panel and stack ID panel-body. Do not edit shipped tabs/main.
-- Toolbar registers linear-panel in shared workspace.panels without replacing other entries. `layout.select`, `layout.show`/`hide` toggle it. Root `on_size_change` selects responsive row composition. Each async callback uses its own context; render must never call notify synchronously. Hidden panels do not render: the toolbar observes reopen transitions and emits a shared refresh-request counter from a task, which the panel consumes outside render. Regression tests must model both copies and skip hidden panel renders.
-- Local config at appHome/config/linear-panel.json: team key, workspace slug and optional demo boolean. Derive viewer from the credential. Example values are ENG/example-workspace; never bake a workplace identity into source.
-- Local Keychain item service herdr-linear/account api-key, read via exec security. Queries go directly to https://api.linear.app/graphql. Links open via exec open. No Pi MCP dependency, server or Node runtime inside Herdr. [Setup details](README.md).
+- `mods/linear-panel/`: `main.js` owns rendering, lifecycle, Keychain, and URL actions; `api.js` owns GraphQL/pagination; `model.js` owns config/filter/grouping/navigation checks; `demo.js` supplies synthetic fixtures. `mod.json` and `icons/linear.svg` complete the mod.
+- Generate `herdr-setup-linear.json` from installed `main`: wrap tabs in a `tab-bar` row, append a `linear-panel` button with props `{ "button": true }`, and add its panel child. Preserve shipped files and IDs `panel` / `panel-body` / `linear-panel`.
+- Register `linear-panel` in shared `workspace.panels`, preserving existing entries. Toggle through `layout.select` and `layout.show`/`hide`; use root `on_size_change` for responsive rows.
+- Hidden panels do not render. The toolbar detects reopen transitions and publishes a shared request counter from a task; the panel schedules refresh outside render. Each async callback uses its own context. Never call `notify` synchronously during render; tests must model both copies and skip hidden renders.
+- Local `config/linear-panel.json` holds team, workspace slug, and optional demo boolean. Resolve the viewer from the credential. Examples use ENG/example-workspace.
+- Read Keychain service `herdr-linear`, account `api-key`, via `security`; query `https://api.linear.app/graphql`; open links via `open`. [Setup details](README.md).
 
-## Watch out
+## Maintenance and verification
 
-- macOS Herdr 0.1.13 is the tested native target. Node 26 is installer/test-only. Installed generated guide/types are the host API authority; don't commit them.
-- Full cursor pagination matters. Do not cap a personal/cycle list silently, fetch issue bodies/comments or create persistent data caches. Do not expose API keys or arbitrary remote error payloads in errors/logs.
-- Mods are trusted native code with exec/network access, not mutually isolated plugins. Review every file and the access disclosure before installing. Keep credentials in Keychain, not JSON/command literals/Git. Never reuse another application's OAuth cache.
-- Copy rather than symlink resources. Preserve existing conflicting mod/layout/config files. Installation does not activate the layout, restart Herdr or publish anything. A Git pull does not update live code; compare/copy deliberately.
-- Herdr's shot command captures the last rendered frame; a covered window can retain an earlier frame. Inspect the actual image rather than assuming an acknowledged layout command has already appeared.
-
-## Done when
-
-- Native source is copied without overwriting conflicts; shipped main/settings remain unchanged.
-- Native `herdr-app check <installed mod directory>` passes and status reports no errors.
-- Toolbar opens the panel alongside Files/Changes, with readable narrow/default/wide rows and selector/cycle transitions.
-- Team/actor/cycle predicates, pagination/deduplication, rollover/no cycle, grouping and failed refresh are covered with external-boundary stubs and synthetic fixtures.
-- Real Keychain/API integration is verified separately when a dedicated read-only key is available; synthetic preview is not live API proof.
-- Only a cropped native synthetic-data capture may become preview.png; no private terminal/workplace content in public assets.
+- Target macOS and Herdr 0.1.13; use Node 26 for installer/tests. Installed API definitions are the host authority and stay outside Git.
+- Paginate fully and fetch list metadata only. Keep credentials in Keychain and issue data in memory. Sanitize remote errors before display.
+- Review native exec/network access before installation. Copy rather than symlink, preserve conflicting files, and activate the layout explicitly. Source updates leave installed copies unchanged.
+- Check the installed mod with `herdr-app check` and inspect `status` for errors. Verify Files/Changes coexistence, tab transitions, external links, per-space restoration, reopen refresh, narrow/default/wide layouts, and light/dark themes in the native app.
+- Cover team/actor/cycle filters, pagination/deduplication, rollover/no cycle, status/project grouping and persistence, and refresh failures with synthetic fixtures and host/network stubs. Verify Keychain/API integration separately.
+- Herdr's `shot` captures the last rendered frame, which may be stale when the window is covered. Inspect each image. Public previews must be cropped native captures containing only synthetic data.

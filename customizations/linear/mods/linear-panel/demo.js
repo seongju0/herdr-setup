@@ -23,7 +23,7 @@ export function demoView(config, view) {
       id: `demo-${number}`, identifier: `${config.team}-${number}`, title, state: states[state], assignee,
       updatedAt: `2026-11-07T${number % 2 ? "12" : "11"}:00:00Z`,
       url: `https://linear.app/${config.workspace}/team/${config.team}/overview`,
-      project: number === 104 ? null : { name: "Workspace improvements", url: `https://linear.app/${config.workspace}/team/${config.team}/overview` },
+      project: number === 104 ? null : { id: "demo-project", name: "Workspace improvements", url: `https://linear.app/${config.workspace}/team/${config.team}/overview` },
     }));
   return { viewer, team: { id: "demo-team", key: config.team, name: "Demo team" }, cycle, issues, loadedAt: Date.now() };
 }

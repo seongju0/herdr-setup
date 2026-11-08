@@ -24,6 +24,7 @@ function vendor({ selectedCycle = cycle, onIssues } = {}) {
       assert.equal(variables.team, 'ENG');
       return json({ viewer, teams: { nodes: [{ id: 'team-eng', key: 'ENG', name: 'Engineering', activeCycle: selectedCycle }] } });
     }
+    assert.match(query, /project\s*\{[^}]*\bid\b/s, 'Project grouping needs stable project IDs');
     return onIssues(variables);
   };
 }
@@ -89,30 +90,63 @@ test('actual status grouping, closed toggle and URL/config boundary', () => {
   assert.equal(linearUrl('file:///etc/passwd'), null);
 });
 
-// GPUI and Herdr are external host boundaries; execute the actual View/lifecycle,
-// model and demo code with a native-contract context, not an internal refresh stub.
-test('hide → reopen schedules refresh outside render and a failed refresh retains the last list', async () => {
+test('project groups use project identity, flat recent-first lists, and a final No project bucket', () => {
+  const project = { id: 'alpha', name: 'Roadmap' };
+  const newer = issue(2, { project, updatedAt: '2026-11-07T13:00:00Z' });
+  const issues = [
+    issue(1, { project }), newer, newer,
+    issue(3, { project: { id: 'beta', name: 'Roadmap' } }),
+    issue(4, { project: { id: 'gamma', name: 'Activity' } }),
+    issue(5),
+    issue(6, { project, state: { id: 'done', name: 'Done', type: 'completed' } }),
+  ];
+  const result = issueGroups(issues, false, 'project');
+  assert.equal(result.total, 6);
+  assert.equal(result.hidden, 1);
+  assert.deepEqual(result.groups.map(g => [g.name, g.issues.length]), [
+    ['Activity', 1], ['Roadmap', 2], ['Roadmap', 1], ['No project', 1],
+  ]);
+  assert.deepEqual(result.groups[1].issues.map(i => i.id), [2, 1]);
+  assert.deepEqual(issueGroups(issues, true, 'project').groups[1].issues.map(i => i.id), [2, 1, 6]);
+});
+
+// External GPUI builders retain the tree/click handlers; real View, grouping and
+// demo collaborators run unchanged. Hidden panel copies deliberately do not render.
+async function nativePanel() {
   const source = (await readFile(new URL('../customizations/linear/mods/linear-panel/main.js', import.meta.url), 'utf8'))
     .replace(/^import .*;\n/gm, '').replace('export default class LinearPanel', 'this.Panel = class LinearPanel');
-  const element = new Proxy({}, { get: (_target, method) => method === 'when'
-    ? (condition, callback) => { if (condition) callback(element); return element; }
-    : () => element });
-  let shown = false, rendering = false, configReads = 0, fail = false, buttonProps = false;
-  const queue = [];
-  const sharedState = new Map();
+  function element() {
+    const node = { children: [] };
+    const add = child => node.children.push(child?.node ?? child);
+    const proxy = new Proxy({}, { get: (_target, method) => {
+      if (method === 'node') return node;
+      return (...args) => {
+        if (method === 'id') node.id = args[0];
+        else if (method === 'child') add(args[0]);
+        else if (method === 'children') args[0].forEach(add);
+        else if (method === 'on_click') node.click = args[0];
+        else if (method === 'when' && args[0]) args[1](proxy);
+        return proxy;
+      };
+    } });
+    return proxy;
+  }
+  const state = { shown: false, configReads: 0, fail: false };
+  let rendering = false, buttonProps = false, root;
+  const queue = [], storage = new Map(), sharedState = new Map();
   const nativeCx = {
     notify() { assert.equal(rendering, false, 'notify must never run during render'); },
     spawn(task) { queue.push(task); },
     focus_handle() { return { focus() {} }; },
   };
   const context = {
-    View: class {}, div: () => element, svg: () => element, h_flex: () => element, v_flex: () => element,
-    layout: () => ({ children: [{ id: 'panel', hidden: !shown }, { id: 'panel-body', active: 'linear-panel' }] }),
+    View: class {}, div: element, svg: element, h_flex: element, v_flex: element,
+    layout: () => ({ children: [{ id: 'panel', hidden: !state.shown }, { id: 'panel-body', active: 'linear-panel' }] }),
     props: () => ({ button: buttonProps }), theme: () => ({}), appHome: () => '/synthetic-home',
-    localStorage: { getItem: () => null, setItem() {} },
+    localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
     nextCommand: () => new Promise(() => {}), run() {},
     setShared: (key, value) => sharedState.set(key, value), shared: key => sharedState.get(key),
-    readTextFile: async () => { configReads++; if (fail) throw new Error('Synthetic read failure'); return JSON.stringify({ team: 'ENG', workspace: 'example', demo: true }); },
+    readTextFile: async () => { state.configReads++; if (state.fail) throw new Error('Synthetic read failure'); return JSON.stringify({ team: 'ENG', workspace: 'example', demo: true }); },
     exec: () => assert.fail('Demo must not read Keychain or open links'),
     loadView, issueGroups, linearUrl, validateConfig, VIEWS, demoView,
   };
@@ -121,32 +155,78 @@ test('hide → reopen schedules refresh outside render and a failed refresh reta
   const toolbar = new context.Panel();
   toolbar.init({}, nativeCx);
   buttonProps = false;
-  const panel = new context.Panel();
-  panel.init({}, nativeCx);
-  queue.shift(); // The host-owned command listener waits independently, with no timer.
+  const mount = () => {
+    const panel = new context.Panel();
+    panel.init({}, nativeCx);
+    queue.shift(); // The host-owned command listener waits independently, with no timer.
+    return panel;
+  };
+  let panel = mount();
   const render = () => {
     rendering = true;
-    try { toolbar.render(nativeCx); if (shown) panel.render(nativeCx); }
+    try { toolbar.render(nativeCx); if (state.shown) root = panel.render(nativeCx).node; }
     finally { rendering = false; }
   };
   const settle = async () => {
     while (queue.length) { await queue.shift()(nativeCx); render(); }
   };
-  render();
-  shown = true;
-  render();
-  assert.equal(configReads, 0, 'No async work starts inside render');
-  await settle();
-  assert.equal(configReads, 1);
-  const previous = panel.snapshots.assigned;
+  const find = (node, id) => node?.id === id ? node : node?.children?.map(child => find(child, id)).find(Boolean);
+  const texts = node => typeof node === 'string' ? [node] : node.children.flatMap(texts);
+  return {
+    state, render, settle, get panel() { return panel; }, get: id => find(root, id),
+    click(id) { const node = find(root, id); assert.ok(node?.click, `Missing clickable ${id}`); node.click({}, nativeCx); render(); },
+    headings: () => find(root, 'linear-issue-list').children.filter(node => !node.id).map(texts),
+    reload() { assert.equal(state.shown, false); panel = mount(); },
+  };
+}
+
+test('hide → reopen schedules refresh outside render and a failed refresh retains the last list', async () => {
+  const host = await nativePanel();
+  host.render();
+  host.state.shown = true;
+  host.render();
+  assert.equal(host.state.configReads, 0, 'No async work starts inside render');
+  await host.settle();
+  assert.equal(host.state.configReads, 1);
+  const previous = host.panel.snapshots.assigned;
   assert.ok(previous.issues.length > 0);
-  render();
-  assert.equal(configReads, 1, 'A normal render does not poll');
-  shown = false; render();
-  fail = true;
-  shown = true; render();
-  await settle();
-  assert.equal(configReads, 2);
-  assert.equal(panel.snapshots.assigned, previous);
-  assert.match(panel.error, /Synthetic read failure/);
+  host.render();
+  assert.equal(host.state.configReads, 1, 'A normal render does not poll');
+  host.state.shown = false; host.render();
+  host.state.fail = true;
+  host.state.shown = true; host.render();
+  await host.settle();
+  assert.equal(host.state.configReads, 2);
+  assert.equal(host.panel.snapshots.assigned, previous);
+  assert.match(host.panel.error, /Synthetic read failure/);
+});
+
+test('grouping clicks regroup cached issues, persist per tab, and leave cycle status groups unchanged', async () => {
+  const host = await nativePanel();
+  host.state.shown = true; host.render(); await host.settle();
+  assert.equal(host.panel.grouping.assigned, 'status');
+  assert.equal(host.panel.grouping.created, 'status');
+  assert.equal(host.headings()[0][0], 'IN PROGRESS');
+  const snapshot = host.panel.snapshots.assigned;
+  host.click('linear-group-project'); await host.settle();
+  assert.deepEqual(host.headings(), [['Workspace improvements', '2'], ['No project', '1']]);
+  assert.ok(host.get('linear-issue-demo-102'), 'Issue rows are retained');
+  assert.equal(host.panel.snapshots.assigned, snapshot);
+  assert.equal(host.state.configReads, 1, 'Grouping does not refetch');
+  host.click('linear-view-created'); await host.settle();
+  assert.equal(host.headings()[0][0], 'IN REVIEW', 'Created defaults independently to status');
+  host.click('linear-group-project'); await host.settle();
+  assert.deepEqual(host.headings(), [['Workspace improvements', '2'], ['No project', '1']]);
+  host.click('linear-view-assigned');
+  host.click('linear-group-status'); await host.settle();
+  assert.equal(host.state.configReads, 2, 'Loaded tabs and grouping switches reuse their data');
+  host.click('linear-view-cycle'); await host.settle();
+  assert.equal(host.get('linear-grouping'), undefined);
+  assert.equal(host.headings()[0][0], 'IN PROGRESS');
+  host.state.shown = false; host.render(); host.reload();
+  host.state.shown = true; host.render(); await host.settle();
+  host.click('linear-view-assigned'); await host.settle();
+  assert.equal(host.headings()[0][0], 'IN PROGRESS', 'Assigned remembers status after reload');
+  host.click('linear-view-created'); await host.settle();
+  assert.deepEqual(host.headings(), [['Workspace improvements', '2'], ['No project', '1']], 'Created remembers project after reload');
 });

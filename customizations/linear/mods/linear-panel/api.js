@@ -12,7 +12,7 @@ export const ISSUES_QUERY = `query PanelIssues($filter: IssueFilter!, $after: St
     nodes {
       id identifier title url updatedAt
       state { id name type color position }
-      project { name url }
+      project { id name url }
       assignee { id name }
     }
     pageInfo { hasNextPage endCursor }
