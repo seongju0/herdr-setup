@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { install, planInstall, makeLayout, cli, workspaceLayoutName } from '../scripts/setup.mjs';
+import { install, planInstall, makeLayout, makeWorkspaceLayout, cli, workspaceLayoutName } from '../scripts/setup.mjs';
 
 const main = {
   id: 'root', type: 'column', background: 'canvas', children: [
@@ -101,13 +101,20 @@ test('workspace install composes with Linear, preserves local resources and refu
   const read = (file) => fs.readFile(target(file), 'utf8');
   const source = path.join(options.root, 'customizations/workspace-browser/mods/workspace-browser');
   await fs.mkdir(path.join(source, 'icons'), { recursive: true });
-  for (const file of ['main.js', 'context.js', 'files.js', 'changes.js', 'directories.js', 'folder-toolbar.js', 'folder-picker.js', 'folder-controls.js', 'mod.json', 'icons/folder.svg', 'LICENSE', 'LICENSE-HERDR', 'NOTICE']) {
+  for (const file of ['main.js', 'context.js', 'files.js', 'changes.js', 'directories.js', 'directory-search.js', 'folder-observer.js', 'folder-picker.js', 'folder-controls.js', 'mod.json', 'icons/folder.svg', 'LICENSE', 'LICENSE-HERDR', 'NOTICE']) {
     await fs.writeFile(path.join(source, file), file === 'mod.json' ? '{}' : `synthetic ${file}`);
   }
   await fs.writeFile(path.join(source, 'gpui-kit.d.ts'), 'generated, not shipped');
   await fs.writeFile(path.join(source, '.local'), 'synthetic, not shipped');
+  const base = structuredClone(main);
+  base.floating = [{ id: 'existing-float', content: { mod: 'synthetic-status' }, edge: 'right', align: 'end' }];
+  base.children.push({ id: 'files-button', type: 'block', content: { mod: 'files', props: { button: true } } },
+    { id: 'changes-button', type: 'block', content: { mod: 'changes', props: { button: true } } });
+  await fs.writeFile(target('layouts/main.json'), JSON.stringify(base));
+  await fs.mkdir(target('config'));
+  await fs.writeFile(target('config/workspace-browser.json'), '{"searchRoots":["~/Synthetic"]}\n');
   await install(options);
-  const preserved = Object.fromEntries(await Promise.all(['layouts/main.json', 'layouts/herdr-setup-linear.json', 'config/linear-panel.json', 'mods/linear-panel/main.js'].map(async (file) => [file, await read(file)])));
+  const preserved = Object.fromEntries(await Promise.all(['layouts/main.json', 'layouts/herdr-setup-linear.json', 'config/linear-panel.json', 'config/workspace-browser.json', 'mods/linear-panel/main.js'].map(async (file) => [file, await read(file)])));
   const browser = { ...options, customization: 'workspace-browser', baseLayout: 'herdr-setup-linear' };
   const layoutPath = `layouts/${workspaceLayoutName}.json`;
   const plan = await planInstall(browser);
@@ -140,12 +147,28 @@ test('workspace install composes with Linear, preserves local resources and refu
   assert.equal(await read('mods/workspace-browser/LICENSE'), 'synthetic LICENSE');
   assert.equal(await read('mods/workspace-browser/LICENSE-HERDR'), 'synthetic LICENSE-HERDR');
   assert.equal(await read('mods/workspace-browser/NOTICE'), 'synthetic NOTICE');
-  for (const file of ['gpui-kit.d.ts', '.local']) await assert.rejects(fs.access(target(`mods/workspace-browser/${file}`)), { code: 'ENOENT' });
+  assert.equal(await read('mods/workspace-browser/directory-search.js'), 'synthetic directory-search.js');
+  assert.equal(await read('mods/workspace-browser/folder-observer.js'), 'synthetic folder-observer.js');
+  for (const file of ['folder-toolbar.js', 'gpui-kit.d.ts', '.local']) await assert.rejects(fs.access(target(`mods/workspace-browser/${file}`)), { code: 'ENOENT' });
   const layout = JSON.parse(await read(layoutPath));
   const find = (node, id) => node.id === id ? node : node.children?.map((child) => find(child, id)).find(Boolean);
   assert.deepEqual(find(layout, 'files').content, { mod: 'workspace-browser', props: { view: 'files' } });
   assert.deepEqual(find(layout, 'changes').content, { mod: 'workspace-browser', props: { view: 'changes' } });
-  assert.deepEqual(find(layout, 'workspace-folder-button').content, { mod: 'workspace-browser', props: { view: 'toolbar' } });
+  assert.equal(find(layout, 'workspace-folder-button'), undefined);
+  assert.deepEqual(layout.floating, [...base.floating, {
+    id: 'workspace-folder-observer', content: { mod: 'workspace-browser', props: { view: 'observer' } },
+  }]);
+  const expected = JSON.parse(preserved['layouts/herdr-setup-linear.json']);
+  for (const view of ['files', 'changes']) find(expected, view).content = { mod: 'workspace-browser', props: { view } };
+  expected.floating = layout.floating;
+  assert.deepEqual(layout, expected); // No tab-bar wrapper/width/button or other tree changes.
+  const plain = makeWorkspaceLayout(main);
+  assert.deepEqual(plain.children[0], main.children[0]);
+  assert.equal(find(plain, 'tab-bar'), undefined);
+  const collision = structuredClone(base);
+  collision.floating[0].id = 'workspace-folder-observer';
+  await fs.writeFile(target('layouts/collision.json'), JSON.stringify(collision));
+  await assert.rejects(install({ ...browser, baseLayout: 'collision' }), /already contains workspace folder IDs/);
   assert.equal(find(layout, 'linear-button').content.mod, 'linear-panel');
   assert.equal(find(layout, 'linear-panel').content.mod, 'linear-panel');
   assert.equal(find(layout, 'panel').hidden, true);

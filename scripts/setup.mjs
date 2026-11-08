@@ -16,7 +16,7 @@ function layoutNodes(layout) {
   const nodes = [];
   function walk(node, parent) {
     nodes.push({ node, parent });
-    for (const child of node.children ?? []) walk(child, node);
+    for (const child of [...(node.children ?? []), ...(node.floating ?? [])]) walk(child, node);
   }
   walk(layout);
   return (id) => nodes.find(({ node }) => node.id === id);
@@ -57,7 +57,9 @@ export function makeWorkspaceLayout(base) {
   if (!tabs?.parent || tabs.node.type !== 'block' || body?.type !== 'stack' || !find('panel')) {
     throw new Error('Unsupported base layout: expected tabs block, panel and panel-body stack. No files changed.');
   }
-  if (find('workspace-folder-button')) throw new Error('Base layout already contains a workspace folder button.');
+  if (find('workspace-folder-button') || find('workspace-folder-observer')) {
+    throw new Error('Base layout already contains workspace folder IDs; merge the layout manually. No files changed.');
+  }
   for (const view of ['files', 'changes']) {
     const panel = body.children?.find((node) => node.id === view);
     if (panel?.type !== 'block' || panel.content?.mod !== view) {
@@ -65,7 +67,9 @@ export function makeWorkspaceLayout(base) {
     }
     panel.content = { ...panel.content, mod: 'workspace-browser', props: { ...panel.content.props, view } };
   }
-  addTabButton(tabs, find, { id: 'workspace-folder-button', type: 'block', size: { px: 160 }, content: { mod: 'workspace-browser', props: { view: 'toolbar' } } });
+  layout.floating = [...(layout.floating ?? []), {
+    id: 'workspace-folder-observer', content: { mod: 'workspace-browser', props: { view: 'observer' } },
+  }];
   return layout;
 }
 
@@ -100,7 +104,7 @@ export async function planInstall({ home = process.env.HERDR_APP_HOME || path.jo
   const source = path.join(root, 'customizations', customization, 'mods', mod);
   const files = await sourceFiles(source);
   const requiredFiles = browser
-    ? ['main.js', 'context.js', 'files.js', 'changes.js', 'directories.js', 'folder-toolbar.js', 'folder-picker.js', 'folder-controls.js', 'mod.json', 'LICENSE', 'LICENSE-HERDR', 'NOTICE']
+    ? ['main.js', 'context.js', 'files.js', 'changes.js', 'directories.js', 'directory-search.js', 'folder-observer.js', 'folder-picker.js', 'folder-controls.js', 'mod.json', 'LICENSE', 'LICENSE-HERDR', 'NOTICE']
     : ['main.js', 'api.js', 'model.js', 'mod.json'];
   for (const required of requiredFiles) {
     if (!files.includes(required)) throw new Error(`Missing source file: ${required}`);

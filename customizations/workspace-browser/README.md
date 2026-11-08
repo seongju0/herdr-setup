@@ -4,15 +4,36 @@ Follow your current Pi session directory in Herdr, or pin a folder for both pane
 
 ## Follow or pin a folder
 
-The folder control beside the tab buttons opens a native searchable picker. Files and Changes share one selection, remembered independently for each Herdr tab.
+The folder control inside either the Files or Changes header opens a native, keyboard-first directory finder. Both panels share one selection, remembered independently for each Herdr tab; no extra tab-bar control is added.
 
 - **Follow session** uses Pi's actual session directory. `/move` and session resume update both panels. Focusing a shell leaves the Pi selection alone; with multiple Pi panes, focusing another Pi makes it current.
 - **Choose a folder** to pin both panels. Later Pi directory changes leave the pin intact. Choose Follow session to immediately return to Pi's latest directory.
-- Search the current session, tab's pane directories, space folder, and recent choices; paste an absolute path or use **Browse…**. Local `~/` paths are supported. Browse uses the local system picker; remote folders use their known paths or a pasted absolute remote path.
+- **Search directories** with case-insensitive fuzzy matching and space-separated terms, then use Up/Down and Enter to select, or Esc to cancel. Paste an absolute path or local `~/` path to choose a folder directly, including one outside your search roots. There is no OS Browse dialog.
 
 Folder selection leaves your terminals where they are. The picker shows full paths and machine context. An unreadable or offline pin stays selected with an error rather than silently switching to a different folder.
 
 **Files** browses the exact selected directory, with expandable folders and bounded read-only text previews. **Changes** resolves the containing Git repository/worktree root and shows that scope explicitly. Its **Commit** action stages and commits **all changes in that repository** (`git add -A`, then `git commit`), not just changes beneath a selected subfolder. A valid non-Git folder works in Files; Changes displays “Not a git repository.”
+
+## Directory search and scoped roots
+
+Directory discovery uses **[fd](https://github.com/sharkdp/fd)**; the native picker filters its results as you type, without launching terminal fzf or running a disk search on every keystroke. Make `fd` available on Herdr's PATH; an existing `~/.pi/agent/bin/fd` is also supported as a local fallback. Setup does not install external tools.
+
+Optional configuration lives in **`~/.config/herdr-app/config/workspace-browser.json`**, or `config/workspace-browser.json` beneath your custom Herdr home:
+
+```json
+{
+  "searchRoots": ["~/Work", "~/Mine"]
+}
+```
+
+- Supply **one or multiple roots** to search only beneath those directories. `~` and `~/` expand to your local home; other roots must be absolute paths.
+- A missing file/setting or an empty list searches beneath the **current selected folder**, falling back to the active space's folder if no selected folder is available. `~/Work` and `~/Mine` are examples, not defaults.
+- Set `"searchRoots": ["~"]` explicitly to search across your home directory. Invalid settings or unreadable roots report errors rather than silently expanding the scope.
+- Config is read when the finder opens; close and reopen it to pick up edits or newly created folders. This configuration limits search discovery, not access to an explicitly entered path.
+
+The flat results include nested directories, including hidden and Git-ignored folders, but exclude files, `.git` and `node_modules`. Discovery does not follow directory symlinks recursively. Each opening takes a bounded snapshot of up to 20,000 directories per root; a partial-result notice explains limits or root failures. At most 50 matching choices are shown, deduplicated with in-scope session/pane/space/recent folders.
+
+Automatic discovery is local on macOS. A remote folder finder retains correctly routed known choices and explicit absolute remote paths; it does not search your local home as if it were remote.
 
 ## Pi integration
 
@@ -72,21 +93,21 @@ For a custom home, use its path and matching app instance. Return to your previo
    { "mod": "workspace-browser", "props": { "view": "changes" } }
    ```
 
-4. Add this block to the `tab-bar` row beside the existing tabs/buttons:
+4. Append this entry to the layout root's `floating` array, preserving any existing entries:
 
    ```json
    {
-     "id": "workspace-folder-button", "type": "block", "size": { "px": 160 },
-     "content": { "mod": "workspace-browser", "props": { "view": "toolbar" } }
+     "id": "workspace-folder-observer", "edge": "top", "align": "start",
+     "content": { "mod": "workspace-browser", "props": { "view": "observer" } }
    }
    ```
 
-   If `tabs` is not already in a `tab-bar` row, wrap it: move its fixed height to the row, give `tabs` a `size` of `{ "weight": 1 }`, then append the folder block. Keep IDs unique, preserve panel visibility/selection and leave the base layout untouched. Merge a substantially customized layout deliberately.
+   The observer draws an empty zero-size element, so it takes no tab-bar space. It remembers focused Pi changes even while both panels are closed. Do not set it `hidden` or add a visible folder button. Keep IDs unique, preserve panel visibility/selection and leave the base layout untouched. Merge a substantially customized layout deliberately.
 5. Set up the Pi integration above, review and check the copied mod, then activate the new layout separately.
 
 ## Access and maintenance
 
-The mod runs trusted native code. It lists folders, reads file previews, and runs Git on the selected machine. Only the explicit Commit action writes Git state; it retains the captured repository and machine for the operation. Review the source before installation.
+The mod runs trusted native code. It reads its optional local search configuration, discovers directories beneath the resolved local roots, lists folders, reads file previews, and runs Git on the selected machine. Only the explicit Commit action writes Git state; it retains the captured repository and machine for the operation. Review the source before installation.
 
 Pins, recent choices and the remembered Pi terminal are saved in Herdr's shared mod state, under `herdr-setup.workspace-browser.v1`. They are local preferences, not repository configuration. Preserve personal paths and workplace data outside Git; use synthetic data for public examples and previews.
 
@@ -94,6 +115,6 @@ Herdr's folder watchers and the existing refresh timer update file/diff content.
 
 ## Source and license
 
-`mods/workspace-browser/main.js` selects Files, Changes, toolbar or picker mode within one native mod. `context.js` owns folder selection and persistence; `directories.js` owns directory listing; the remaining files own their views. Installed Herdr API definitions remain the native host authority.
+`mods/workspace-browser/main.js` reads native `herdr.props()` and selects Files, Changes, observer or picker mode within one native mod. `context.js` owns folder selection and persistence; `directory-search.js` owns search configuration and discovery; `directories.js` retains the existing directory listing and choice validation. The remaining files own their views. Installed Herdr API definitions remain the native host authority.
 
 Files, Changes, directory-listing code and file-browser icons are adapted from **Herdr 0.1.13**, [herdrdev/herdr-app](https://github.com/herdrdev/herdr-app). Those upstream portions retain [Apache License 2.0](mods/workspace-browser/LICENSE-HERDR) and [attribution](mods/workspace-browser/NOTICE). New herdr-setup code uses the repository's [MIT license](../../LICENSE).

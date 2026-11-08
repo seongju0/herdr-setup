@@ -13,7 +13,7 @@ async function nativeHost() {
   let rendering = false;
   const queue = [], failures = [], shared = new Map(), modules = new Map();
   const state = {
-    shown: true, calls: [], overlays: [], browse: 0, browsePath: null, hook: null,
+    shown: true, calls: [], overlays: [], hook: null, config: null, discoveries: new Map(),
     spaces: [{ id: 's', active: true, machine: null, folder: '/space', tabs: [{ id: 'a', active: true }, { id: 'b' }] }],
     panes: [{ pane: 'pi-pane', tab: 'a', terminal: 't1', cwd: '/shell-old' }, { pane: 'shell-pane', tab: 'a', terminal: 't2', cwd: '/shell' }],
     terminals: [{ address: 't1', state: 'live', report: { app: 'pi' }, labels: { 'pi.session-id': 'session-1', 'pi.session-cwd': '/repo/pkg' } },
@@ -51,25 +51,25 @@ async function nativeHost() {
       const events = new Map(); let value = '';
       const input = { on: (name, fn) => events.set(name, fn), value: () => value,
         set_value(next) { assert.equal(rendering, false); value = next; },
-        focus() {}, release() {}, emit(name, next) { if (next !== undefined) value = next; events.get(name)?.({}, cx); } };
+        focus() {}, release() { input.released = true; }, emit(name, next) { if (next !== undefined) value = next; events.get(name)?.({}, cx); } };
       return input;
     } },
     Input: { new: element }, Editor: { new: element },
     EditorState: { new: options => ({ ...options, release() {} }) },
     Scrollbar: { vertical: element }, v_virtual_list: element,
     spaces: () => state.spaces, panes: () => state.panes, terminals: () => state.terminals,
-    agents: () => state.agents, focused: () => state.focus,
-    theme: () => ({}), settings: () => ({}), window: () => ({ platform: 'macos' }), home: () => '/home/synthetic',
+    agents: () => state.agents, focused: () => state.focus, props: () => state.copyProps,
+    theme: () => ({}), settings: () => ({}), window: () => ({ platform: 'macos' }), home: () => '/home/synthetic', appHome: () => '/app',
     shared: key => shared.get(key), setShared(key, value) { assert.equal(rendering, false, 'shared write during render'); shared.set(key, value); },
     openOverlay(options) { state.overlays.push(options); return 'overlay'; },
     closeOverlay() { picker?.close(cx); picker = null; },
-    pickFolder: async () => { state.browse++; return state.browsePath; },
     watchFolder: () => new Promise(() => {}),
-    readTextFile: async (path, options) => { state.calls.push({ read: path, ...options }); return 'sample text\n'; },
+    readTextFile: async (path, options) => { state.calls.push({ read: path, ...options }); return path === '/app/config/workspace-browser.json' ? state.config : 'sample text\n'; },
     exec: async (cmd, args, options = {}) => {
       const call = { cmd, args: Array.from(args), ...options }; state.calls.push(call);
       const intercepted = state.hook?.(call);
       if (intercepted) return intercepted;
+      if (cmd === 'fd' || cmd === '/home/synthetic/.pi/agent/bin/fd') return ok(state.discoveries.get(args.at(-1)) ?? '');
       if (cmd === 'sh') return args.at(-1) === '/missing' ? { code: 1, stdout: '', stderr: 'Not a directory' } : ok('f\0sample.txt\0');
       assert.equal(cmd, 'git', 'No real processes');
       if (args.includes('--show-toplevel')) {
@@ -100,14 +100,15 @@ async function nativeHost() {
     modules.set(name, result); return result;
   }
   const { default: Main } = await load('main.js');
-  const mount = props => { const view = new Main(); view.init(props, cx); return view; };
-  const toolbar = mount({ view: 'toolbar' }), files = mount({ view: 'files' }), changes = mount({ view: 'changes' });
+  // Herdr exposes layout/overlay props through props(), not the root init argument.
+  const mount = copyProps => { state.copyProps = copyProps; const view = new Main(); view.init(undefined, cx); return view; };
+  const observer = mount({ view: 'observer' }), files = mount({ view: 'files' }), changes = mount({ view: 'changes' });
   let picker = null, trees = {};
   const find = (node, id) => node?.id === id ? node : node?.children?.map(child => find(child, id)).find(Boolean);
   const render = () => {
     rendering = true;
     try {
-      trees.toolbar = toolbar.render(cx).node;
+      trees.observer = observer.render(cx).node;
       if (state.shown) { trees.files = files.render(cx).node; trees.changes = changes.render(cx).node; }
       if (picker) trees.picker = picker.render(cx).node;
     } finally { rendering = false; }
@@ -122,7 +123,7 @@ async function nativeHost() {
     if (failures.length) throw failures.shift();
   };
   const click = (view, id) => { const node = find(trees[view], id); assert.ok(node?.click, `${view}: missing ${id}`); node.click({}, cx); render(); };
-  const open = () => { click('toolbar', 'workspace-folder'); picker = mount({ ...state.overlays.at(-1).props, overlay: 'overlay' }); render(); return picker.implementation; };
+  const open = (panel = 'files') => { click(panel, 'workspace-folder'); picker = mount({ ...state.overlays.at(-1).props, overlay: 'overlay' }); render(); return picker.implementation; };
   const text = node => typeof node === 'string' ? node : (node?.children ?? []).map(text).join(' ');
   return { state, render, settle, click, open,
     get files() { return files.implementation; }, get changes() { return changes.implementation; }, get picker() { return picker?.implementation; },
@@ -135,10 +136,11 @@ async function nativeHost() {
   };
 }
 
-test('native toolbar/picker and Files/Changes follow live Pi sessions, pin/unpin and persist per tab even with hidden panels', async () => {
+test('native directory picker and Files/Changes follow live Pi sessions, pin/unpin and persist per tab even with hidden panels', async () => {
   const host = await nativeHost(); host.render(); await host.settle();
   assert.equal(host.files.root, '/repo/pkg'); assert.equal(host.changes.root, '/repo');
-  assert.match(host.text('toolbar'), /Session · pkg/);
+  assert.equal(host.text('observer'), '', 'The always-mounted observer paints no chrome');
+  assert.match(host.text('files'), /Session · \/repo\/pkg/);
   assert.match(host.text('changes'), /\/repo · All repository changes/);
   host.click('files', 'file-sample.txt'); await host.settle();
   assert.equal(host.files.code.value, 'sample text\n');
@@ -150,14 +152,46 @@ test('native toolbar/picker and Files/Changes follow live Pi sessions, pin/unpin
   // Session replacement models the publisher updating both labels on /move.
   Object.assign(host.state.terminals[0].labels, { 'pi.session-id': 'session-2', 'pi.session-cwd': '/next/sub' });
   host.render(); await host.settle(); assert.equal(host.files.root, '/next/sub'); assert.equal(host.changes.root, '/next');
-  const picker = host.open(); host.type('NxT');
-  assert.ok(picker.rows().some(r => r.cwd === '/next/sub'), 'Case-insensitive subsequence search uses real candidates');
+  host.state.config = JSON.stringify({ searchRoots: ['/next', '~/Projects', '/next/'] });
+  host.state.discoveries.set('/next', '/next/unknown deep/sub/\0/next/another/\0');
+  host.state.discoveries.set('/home/synthetic/Projects', '/home/synthetic/Projects/hidden worktree/\0');
+  const picker = host.open(); await host.settle();
+  assert.ok(host.state.calls.some(c => c.read === '/app/config/workspace-browser.json'));
+  const scans = host.state.calls.filter(c => c.cmd === 'fd');
+  assert.deepEqual(scans.map(c => c.args.at(-1)), ['/next', '/home/synthetic/Projects']);
+  assert.deepEqual(scans[0].args.slice(0, -1), ['--type', 'd', '--relative-path', '--show-errors', '--color', 'never', '--print0', '--hidden', '--no-ignore', '--exclude', '.git', '--exclude', 'node_modules', '--max-results', '20001', '']);
+  assert.equal(picker.rows().some(r => r.cwd === '/space' || r.cwd === '/shell'), false, 'Known history cannot broaden configured roots');
+  host.type('NxT'); assert.ok(picker.rows().some(r => r.cwd === '/next/sub'), 'Case-insensitive subsequence search uses real candidates');
   host.type(''); host.key('down'); assert.equal(picker.at, 1); host.key('up'); assert.equal(picker.at, 0);
-  host.type('/pinned/sub'); host.submit(); await host.settle();
+  host.type('UnKn Dp');
+  assert.deepEqual(Array.from(picker.rows(), r => r.cwd), ['/next/unknown deep/sub'], 'All fuzzy terms match a discovered directory absent from history');
+  const beforeTyping = host.state.calls.filter(c => c.cmd === 'fd').length;
+  host.type('unknown deep'); host.submit(); await host.settle();
+  assert.equal(host.files.root, '/next/unknown deep/sub'); assert.equal(host.changes.root, '/next/unknown deep');
+  assert.equal(host.state.calls.filter(c => c.cmd === 'fd').length, beforeTyping, 'Typing never spawns another process');
+  host.state.config = JSON.stringify({ searchRoots: ['/only-root'] });
+  host.open('changes'); await host.settle();
+  assert.equal(host.picker.rows().some(r => r.cwd.startsWith('/next/')), false, 'Confirmed recents outside the new roots are excluded');
+  host.key('escape');
+  assert.equal(host.state.calls.filter(c => c.cmd === 'fd').at(-1).args.at(-1), '/only-root', 'One configured root stays one root');
+  assert.equal(host.files.root, '/next/unknown deep/sub', 'Esc leaves the pin alone');
+  host.open(); host.click('picker', 'folder-follow'); await host.settle();
+  for (const config of [null, JSON.stringify({ searchRoots: [] })]) {
+    host.state.config = config;
+    host.state.terminals[0].labels['pi.session-cwd'] = '/captured/sub';
+    host.render(); await host.settle();
+    host.open();
+    // Capture scope at opening, not after a subsequent session movement.
+    host.state.terminals[0].labels['pi.session-cwd'] = '/later-move';
+    await host.settle(); host.key('escape');
+    assert.equal(host.state.calls.filter(c => c.cmd === 'fd').at(-1).args.at(-1), '/captured/sub');
+    assert.equal(host.files.root, '/later-move');
+  }
+  await host.pin('/pinned/sub');
   assert.equal(host.saved().pin.cwd, '/pinned/sub'); assert.equal(host.files.root, '/pinned/sub');
   Object.assign(host.state.terminals[0].labels, { 'pi.session-id': 'session-3', 'pi.session-cwd': '/latest/sub' });
   host.render(); await host.settle(); assert.equal(host.files.root, '/pinned/sub');
-  assert.equal(host.saved().recents.length, 1, 'Automatic session moves never populate recents');
+  assert.equal(host.saved().recents.length, 2, 'Only confirmed selections populate recents');
 
   host.state.focus = { space: 's', tab: 'b', pane: null, terminal: null };
   host.render(); await host.settle(); assert.equal(host.files.root, '/space');
@@ -174,7 +208,7 @@ test('native toolbar/picker and Files/Changes follow live Pi sessions, pin/unpin
   host.state.focus = { space: 's', tab: 'a', pane: null, terminal: 't3', agent: 't3' };
   host.render(); await host.settle(); assert.equal(host.saved().followPi, 't3');
   host.state.focus = { space: 's', tab: 'a', pane: 'shell-pane', terminal: 't2', cwd: '/shell' };
-  host.render(); await host.settle(); assert.match(host.text('toolbar'), /Pin · hidden-pin/);
+  host.render(); await host.settle(); assert.equal(host.text('observer'), '');
   assert.equal(host.saved().followPi, 't3', 'Pi focus is observed even while pinned and panels are hidden');
   host.state.shown = true; host.render(); await host.settle(); assert.equal(host.files.root, '/hidden-pin');
   host.open(); host.click('picker', 'folder-follow'); await host.settle(); assert.equal(host.files.root, '/second/sub');
@@ -183,11 +217,11 @@ test('native toolbar/picker and Files/Changes follow live Pi sessions, pin/unpin
   assert.equal(host.files.root, '/second/sub', 'A shown Pi takes priority over the underlying Pi terminal');
   host.state.terminals[2].labels = {}; host.render(); await host.settle();
   assert.equal(host.files.root, undefined); assert.equal(host.changes.root, null);
-  assert.match(host.text('toolbar'), /integration unavailable/);
+  assert.match(host.text('files'), /integration unavailable/);
   host.state.terminals[2].report = null; host.state.terminals[0].report = null;
   host.state.focus = { space: 's', tab: 'a', pane: 'shell-pane', terminal: 't2', cwd: '/shell' };
   host.render(); await host.settle(); assert.equal(host.files.root, '/shell');
-  assert.match(host.text('toolbar'), /Pane · shell/);
+  assert.match(host.text('files'), /Pane · \/shell/);
 });
 
 test('selection validation, non-Git folders, stale IO/commit guards and remote routing preserve the captured target', async () => {
@@ -211,7 +245,7 @@ test('selection validation, non-Git folders, stale IO/commit guards and remote r
   // Publish the actual picker choice, then click before the scheduled panel
   // refresh can clear the old repository/message.
   host.changes.input.emit('change', 'stale click');
-  host.open(); host.type('/changed/sub'); host.submit(); await host.runNextTask();
+  host.open(); await host.settle(); host.type('/changed/sub'); host.submit(); await host.runNextTask();
   host.click('changes', 'commit'); await host.settle(); assert.equal(writes().length, 0, 'Stale repo click must never write');
 
   const add = deferred();
@@ -251,6 +285,54 @@ test('selection validation, non-Git folders, stale IO/commit guards and remote r
   cancelled.resolve(ok('')); await host.settle(); assert.equal(host.saved('b')?.pin, undefined);
   host.state.hook = null;
 
+  const fdCalls = () => host.state.calls.filter(c => c.cmd === 'fd' || c.cmd?.endsWith('/bin/fd'));
+  const beforeInvalid = fdCalls().length;
+  for (const config of ['{broken', JSON.stringify({ searchRoots: 'not-an-array' }), JSON.stringify({ searchRoots: ['/valid', 'relative'] })]) {
+    host.state.config = config; host.open(); await host.settle();
+    assert.match(host.text('picker'), /configuration error/);
+    assert.equal(host.picker.rows().length, 0, 'Invalid config cannot leak unscoped known folders');
+    host.key('escape');
+  }
+  assert.equal(fdCalls().length, beforeInvalid, 'Invalid config never starts an unscoped fallback');
+  host.open(); host.type('/outside-config/sub'); host.submit(); await host.settle();
+  assert.equal(host.files.root, '/outside-config/sub', 'Explicit paths remain available after config errors');
+  host.open(); host.click('picker', 'folder-follow'); await host.settle();
+  assert.equal(host.files.root, '/space', 'Follow remains available after config errors');
+
+  host.state.config = JSON.stringify({ searchRoots: ['/space', '/broken-root'] });
+  const many = Array.from({ length: 20001 }, (_, i) => `/space/dir-${i}/`).join('\0') + '\0';
+  host.state.hook = c => c.cmd === 'fd' ? (c.args.at(-1) === '/broken-root'
+    ? Promise.resolve({ code: 1, stdout: '', stderr: 'permission denied' })
+    : Promise.resolve({ code: 0, stdout: many, stderr: 'incomplete traversal' })) : null;
+  host.open(); await host.settle();
+  assert.match(host.text('picker'), /Partial results/); assert.match(host.text('picker'), /permission denied/);
+  assert.match(host.text('picker'), /incomplete traversal/, 'A successful fd exit can still mean an incomplete scan');
+  assert.equal(fdCalls().some(c => c.cmd.endsWith('/bin/fd')), false, 'Root/permission failures never retry through an executable fallback');
+  assert.ok(host.picker.rows().some(r => r.cwd === '/space'), 'In-scope known choices survive partial failure');
+  assert.equal(host.picker.rows().length, 50, 'Displayed choices stay bounded');
+  host.type('dir-20000'); assert.equal(host.picker.rows().length, 0, 'The sentinel is not selectable');
+  host.type('dir-19998'); assert.equal(host.picker.rows()[0].cwd, '/space/dir-19998');
+  host.type(''); host.click('picker', 'folder-choice-0'); await host.settle();
+  assert.equal(host.saved('b').pin.cwd, '/space', 'Known folders still validate and pin after a failed root');
+  host.state.hook = c => c.cmd === 'fd' ? Promise.reject(new Error('cannot start fd: program not found')) : null;
+  host.open(); await host.settle();
+  assert.ok(fdCalls().some(c => c.cmd === '/home/synthetic/.pi/agent/bin/fd'), 'Only missing executable invokes the local fallback');
+  host.key('escape');
+
+  const scan = deferred();
+  host.state.config = JSON.stringify({ searchRoots: ['/space'] });
+  host.state.hook = c => c.cmd === 'fd' ? scan.promise : null;
+  const dismissed = host.open(); await host.settle();
+  assert.ok(dismissed.rows().some(r => r.cwd === '/space'), 'In-scope known folders are usable while discovery is pending');
+  assert.match(host.text('picker'), /Discovering directories/);
+  host.key('escape');
+  assert.equal(dismissed.input.released, true);
+  const published = host.saved('b').pin.cwd;
+  scan.resolve(ok('/space/after-close/\0')); await host.settle();
+  assert.equal(dismissed.discovered.length, 0, 'Late discovery cannot update a closed view');
+  assert.equal(host.saved('b').pin.cwd, published, 'Discovery never publishes a selection');
+  host.state.config = null; host.state.hook = null;
+
   host.state.spaces.push({ id: 'remote/s', active: false, machine: 'remote', folder: '/srv/project', tabs: [{ id: 'remote/a', active: true }] });
   host.state.panes.push({ pane: 'remote/p', tab: 'remote/a', terminal: 'remote/t4', cwd: '/srv/shell' });
   host.state.terminals.push({ address: 'remote/t4', state: 'live', report: { app: 'pi' }, labels: { 'pi.session-id': 'remote-session', 'pi.session-cwd': '/srv/project/sub' } });
@@ -259,8 +341,10 @@ test('selection validation, non-Git folders, stale IO/commit guards and remote r
   assert.equal(host.files.root, '/srv/project/sub'); assert.equal(host.files.on, 'remote');
   assert.equal(host.changes.root, '/srv/project'); assert.equal(host.changes.on, 'remote');
   assert.match(host.text('changes'), /\/srv\/project · remote · All repository changes/);
-  host.open(); host.click('picker', 'folder-browse'); await host.settle(); assert.equal(host.state.browse, 0);
-  assert.match(host.text('picker'), /Browse is local only/);
+  const scansBeforeRemote = host.state.calls.filter(c => c.cmd === 'fd').length;
+  host.open(); await host.settle();
+  assert.match(host.text('picker'), /discovery is local only/);
+  assert.equal(host.state.calls.filter(c => c.cmd === 'fd').length, scansBeforeRemote, 'Remote dialog never scans local folders');
   const known = host.picker.rows().findIndex(r => r.cwd === '/srv/project' && r.on === 'remote');
   host.click('picker', `folder-choice-${known}`); await host.settle();
   assert.equal(host.files.root, '/srv/project', 'Known remote choice pins the exact directory');
@@ -275,6 +359,6 @@ test('selection validation, non-Git folders, stale IO/commit guards and remote r
   host.state.focus = { space: 's', tab: 'b', pane: null, terminal: null };
   host.render(); await host.settle(); remoteAdd.resolve(ok('')); await host.settle();
   assert.deepEqual(writes().slice(-2).map(c => [c.args[0], c.cwd, c.on]), [['add', '/srv/pasted', 'remote'], ['commit', '/srv/pasted', 'remote']]);
-  host.open(); host.state.browsePath = null; host.click('picker', 'folder-browse'); await host.settle();
-  assert.equal(host.state.browse, 1); assert.equal(host.saved('b')?.pin, undefined, 'Browse cancellation does not publish');
+  host.open(); host.key('escape'); await host.settle();
+  assert.equal(host.saved('b')?.pin.cwd, '/space', 'Cancellation does not change the existing pin');
 });

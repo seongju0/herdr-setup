@@ -4,7 +4,7 @@ Reusable native [Herdr](https://herdr.dev) customizations.
 
 ## Customizations
 
-- **[Files and Changes](customizations/workspace-browser/README.md)** — follow the current Pi session directory, including `/move`, or pin a shared folder per Herdr tab. Browse files and repository changes with a native searchable folder picker. [Recipe](customizations/workspace-browser/RECIPE.md)
+- **[Files and Changes](customizations/workspace-browser/README.md)** — follow the current Pi session directory, including `/move`, or pin a shared folder per Herdr tab. Browse files and repository changes with an in-panel directory-only fuzzy finder and configurable search roots. [Recipe](customizations/workspace-browser/RECIPE.md)
 - **[Linear panel](customizations/linear/README.md)** — your assigned issues, created issues, and personal cycle work in a responsive side panel beside your terminals. [Recipe](customizations/linear/RECIPE.md) · [Narrow preview](customizations/linear/preview.png) · [Wide preview](customizations/linear/preview-wide.png)
 
 **Requirements:** macOS and Herdr 0.1.13. The optional installer and tests use Node 26; the mod runs in Herdr's native GPUI runtime.
