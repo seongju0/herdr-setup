@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { install, planInstall, makeLayout, cli } from '../scripts/setup.mjs';
+import { install, planInstall, makeLayout, cli, workspaceLayoutName } from '../scripts/setup.mjs';
 
 const main = {
   id: 'root', type: 'column', background: 'canvas', children: [
@@ -11,6 +11,7 @@ const main = {
     { id: 'panel', type: 'column', hidden: true, children: [
       { id: 'panel-body', type: 'stack', active: 'files', children: [
         { id: 'files', type: 'block', content: { mod: 'files' } },
+        { id: 'changes', type: 'block', content: { mod: 'changes' } },
       ] },
     ] },
   ],
@@ -90,4 +91,73 @@ test('layout generation accepts existing tab-bar without mutating the source', (
 
 test('CLI rejects unknown options before reading or writing a home', async () => {
   await assert.rejects(cli(['install', 'linear', '--token', 'not-a-key']), /Invalid option/);
+  await assert.rejects(cli(['install', 'workspace-browser', '--team', 'ENG']), /Invalid option/);
+  await assert.rejects(cli(['plan', 'workspace-browser', '--base-layout', '../main']), /Invalid base layout/);
+});
+
+test('workspace install composes with Linear, preserves local resources and refuses conflicts before writes', async (t) => {
+  const options = await fixture(t);
+  const target = (file) => path.join(options.home, file);
+  const read = (file) => fs.readFile(target(file), 'utf8');
+  const source = path.join(options.root, 'customizations/workspace-browser/mods/workspace-browser');
+  await fs.mkdir(path.join(source, 'icons'), { recursive: true });
+  for (const file of ['main.js', 'context.js', 'files.js', 'changes.js', 'directories.js', 'folder-toolbar.js', 'folder-picker.js', 'folder-controls.js', 'mod.json', 'icons/folder.svg', 'LICENSE', 'LICENSE-HERDR', 'NOTICE']) {
+    await fs.writeFile(path.join(source, file), file === 'mod.json' ? '{}' : `synthetic ${file}`);
+  }
+  await fs.writeFile(path.join(source, 'gpui-kit.d.ts'), 'generated, not shipped');
+  await fs.writeFile(path.join(source, '.local'), 'synthetic, not shipped');
+  await install(options);
+  const preserved = Object.fromEntries(await Promise.all(['layouts/main.json', 'layouts/herdr-setup-linear.json', 'config/linear-panel.json', 'mods/linear-panel/main.js'].map(async (file) => [file, await read(file)])));
+  const browser = { ...options, customization: 'workspace-browser', baseLayout: 'herdr-setup-linear' };
+  const layoutPath = `layouts/${workspaceLayoutName}.json`;
+  const plan = await planInstall(browser);
+  assert.deepEqual(plan.conflicts, []);
+  assert.equal(plan.entries.some(({ relative }) => relative.startsWith('config/')), false);
+  await assert.rejects(fs.access(target('mods/workspace-browser')), { code: 'ENOENT' });
+  await assert.rejects(fs.access(target(layoutPath)), { code: 'ENOENT' });
+
+  // A directory symlink must not redirect the copy into another owner's folder.
+  const outside = path.join(options.root, 'outside');
+  await fs.mkdir(outside);
+  await fs.symlink(outside, target('mods/workspace-browser'), 'dir');
+  await assert.rejects(install(browser), /Refusing conflicts/);
+  assert.deepEqual(await fs.readdir(outside), []);
+  await assert.rejects(fs.access(target(layoutPath)), { code: 'ENOENT' });
+  await fs.unlink(target('mods/workspace-browser'));
+
+  await fs.mkdir(target('mods/workspace-browser'));
+  await fs.writeFile(target('mods/workspace-browser/main.js'), 'local work');
+  await assert.rejects(install(browser), /Refusing conflicts/);
+  assert.equal(await read('mods/workspace-browser/main.js'), 'local work');
+  await assert.rejects(fs.access(target('mods/workspace-browser/context.js')), { code: 'ENOENT' });
+  await fs.unlink(target('mods/workspace-browser/main.js'));
+
+  const result = await install(browser);
+  assert.equal(result.layoutName, workspaceLayoutName);
+  assert.equal(result.activationCommand, `herdr-app do layout.switch '{"name":"${workspaceLayoutName}"}'`);
+  for (const [file, content] of Object.entries(preserved)) assert.equal(await read(file), content);
+  assert.equal(await read('mods/workspace-browser/context.js'), 'synthetic context.js');
+  assert.equal(await read('mods/workspace-browser/LICENSE'), 'synthetic LICENSE');
+  assert.equal(await read('mods/workspace-browser/LICENSE-HERDR'), 'synthetic LICENSE-HERDR');
+  assert.equal(await read('mods/workspace-browser/NOTICE'), 'synthetic NOTICE');
+  for (const file of ['gpui-kit.d.ts', '.local']) await assert.rejects(fs.access(target(`mods/workspace-browser/${file}`)), { code: 'ENOENT' });
+  const layout = JSON.parse(await read(layoutPath));
+  const find = (node, id) => node.id === id ? node : node.children?.map((child) => find(child, id)).find(Boolean);
+  assert.deepEqual(find(layout, 'files').content, { mod: 'workspace-browser', props: { view: 'files' } });
+  assert.deepEqual(find(layout, 'changes').content, { mod: 'workspace-browser', props: { view: 'changes' } });
+  assert.deepEqual(find(layout, 'workspace-folder-button').content, { mod: 'workspace-browser', props: { view: 'toolbar' } });
+  assert.equal(find(layout, 'linear-button').content.mod, 'linear-panel');
+  assert.equal(find(layout, 'linear-panel').content.mod, 'linear-panel');
+  assert.equal(find(layout, 'panel').hidden, true);
+  assert.equal(find(layout, 'panel-body').active, 'files');
+  assert.deepEqual((await install(browser)).created, []);
+
+  const custom = JSON.parse(preserved['layouts/herdr-setup-linear.json']);
+  find(custom, 'files').content.mod = 'user-files';
+  await fs.writeFile(target('layouts/custom.json'), JSON.stringify(custom));
+  await assert.rejects(install({ ...browser, baseLayout: 'custom' }), /expected shipped files/);
+  await fs.writeFile(target(layoutPath), '{"local":true}');
+  await assert.rejects(install(browser), /Refusing conflicts/);
+  assert.equal(await read(layoutPath), '{"local":true}');
+  for (const [file, content] of Object.entries(preserved)) assert.equal(await read(file), content);
 });

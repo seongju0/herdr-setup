@@ -8,24 +8,21 @@ import { validateConfig } from '../customizations/linear/mods/linear-panel/model
 const projectRoot = fileURLToPath(new URL('../', import.meta.url));
 export const layoutName = 'herdr-setup-linear';
 export const activationCommand = `herdr-app do layout.switch '{"name":"${layoutName}"}'`;
+export const workspaceLayoutName = 'herdr-setup-workspace-browser';
+const activationFor = (name) => `herdr-app do layout.switch '${JSON.stringify({ name })}'`;
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
 
-export function makeLayout(main) {
-  const layout = structuredClone(main);
+function layoutNodes(layout) {
   const nodes = [];
   function walk(node, parent) {
     nodes.push({ node, parent });
     for (const child of node.children ?? []) walk(child, node);
   }
   walk(layout);
-  const find = (id) => nodes.find(({ node }) => node.id === id);
-  const tabs = find('tabs');
-  const body = find('panel-body')?.node;
-  if (!tabs?.parent || tabs.node.type !== 'block' || body?.type !== 'stack' || !find('panel')) {
-    throw new Error('Unsupported main layout: expected tabs block, panel and panel-body stack. No files changed.');
-  }
-  if (find('linear-panel') || find('linear-button')) throw new Error('Main layout already contains Linear IDs.');
-  const button = { id: 'linear-button', type: 'block', size: { px: 86 }, content: { mod: 'linear-panel', props: { button: true } } };
+  return (id) => nodes.find(({ node }) => node.id === id);
+}
+
+function addTabButton(tabs, find, button) {
   if (tabs.parent.id === 'tab-bar' && tabs.parent.type === 'row') {
     tabs.parent.children.push(button);
   } else {
@@ -35,7 +32,40 @@ export function makeLayout(main) {
     tabs.node.size = { weight: 1 };
     tabs.parent.children[index] = { id: 'tab-bar', type: 'row', ...(size ? { size } : {}), resizable: false, children: [tabs.node, button] };
   }
+}
+
+export function makeLayout(main) {
+  const layout = structuredClone(main);
+  const find = layoutNodes(layout);
+  const tabs = find('tabs');
+  const body = find('panel-body')?.node;
+  if (!tabs?.parent || tabs.node.type !== 'block' || body?.type !== 'stack' || !find('panel')) {
+    throw new Error('Unsupported main layout: expected tabs block, panel and panel-body stack. No files changed.');
+  }
+  if (find('linear-panel') || find('linear-button')) throw new Error('Main layout already contains Linear IDs.');
+  const button = { id: 'linear-button', type: 'block', size: { px: 86 }, content: { mod: 'linear-panel', props: { button: true } } };
+  addTabButton(tabs, find, button);
   body.children.push({ id: 'linear-panel', type: 'block', content: { mod: 'linear-panel' } });
+  return layout;
+}
+
+export function makeWorkspaceLayout(base) {
+  const layout = structuredClone(base);
+  const find = layoutNodes(layout);
+  const tabs = find('tabs');
+  const body = find('panel-body')?.node;
+  if (!tabs?.parent || tabs.node.type !== 'block' || body?.type !== 'stack' || !find('panel')) {
+    throw new Error('Unsupported base layout: expected tabs block, panel and panel-body stack. No files changed.');
+  }
+  if (find('workspace-folder-button')) throw new Error('Base layout already contains a workspace folder button.');
+  for (const view of ['files', 'changes']) {
+    const panel = body.children?.find((node) => node.id === view);
+    if (panel?.type !== 'block' || panel.content?.mod !== view) {
+      throw new Error(`Unsupported base layout: expected shipped ${view} block in panel-body; merge custom content manually. No files changed.`);
+    }
+    panel.content = { ...panel.content, mod: 'workspace-browser', props: { ...panel.content.props, view } };
+  }
+  addTabButton(tabs, find, { id: 'workspace-folder-button', type: 'block', size: { px: 160 }, content: { mod: 'workspace-browser', props: { view: 'toolbar' } } });
   return layout;
 }
 
@@ -56,19 +86,31 @@ async function sourceFiles(directory, prefix = '') {
 }
 
 // Read-only preflight. Existing local config is preserved unless explicit options disagree.
-export async function planInstall({ home = process.env.HERDR_APP_HOME || path.join(os.homedir(), '.config/herdr-app'), team, workspace, root = projectRoot } = {}) {
+export async function planInstall({ home = process.env.HERDR_APP_HOME || path.join(os.homedir(), '.config/herdr-app'), team, workspace, root = projectRoot, customization = 'linear', baseLayout = 'main' } = {}) {
+  if (!['linear', 'workspace-browser'].includes(customization)) throw new Error(`Unknown customization: ${customization}`);
+  const browser = customization === 'workspace-browser';
+  if (typeof baseLayout !== 'string' || !baseLayout.trim() || /[/\\\0]/.test(baseLayout) || ['.', '..'].includes(baseLayout)) {
+    throw new Error('Invalid base layout: use a layout name, not a path.');
+  }
+  if (!browser && baseLayout !== 'main') throw new Error('--base-layout is only supported for workspace-browser.');
+  if (browser && (team !== undefined || workspace !== undefined)) throw new Error('workspace-browser does not use team or workspace options.');
   home = path.resolve(home);
-  const source = path.join(root, 'customizations/linear/mods/linear-panel');
+  const mod = browser ? 'workspace-browser' : 'linear-panel';
+  const targetLayoutName = browser ? workspaceLayoutName : layoutName;
+  const source = path.join(root, 'customizations', customization, 'mods', mod);
   const files = await sourceFiles(source);
-  for (const required of ['main.js', 'api.js', 'model.js', 'mod.json']) {
+  const requiredFiles = browser
+    ? ['main.js', 'context.js', 'files.js', 'changes.js', 'directories.js', 'folder-toolbar.js', 'folder-picker.js', 'folder-controls.js', 'mod.json', 'LICENSE', 'LICENSE-HERDR', 'NOTICE']
+    : ['main.js', 'api.js', 'model.js', 'mod.json'];
+  for (const required of requiredFiles) {
     if (!files.includes(required)) throw new Error(`Missing source file: ${required}`);
   }
-  const main = JSON.parse(await fs.readFile(path.join(home, 'layouts/main.json'), 'utf8'));
-  const generated = json(makeLayout(main));
+  const base = JSON.parse(await fs.readFile(path.join(home, 'layouts', `${baseLayout}.json`), 'utf8'));
+  const generated = json(browser ? makeWorkspaceLayout(base) : makeLayout(base));
   const entries = [];
   const conflicts = [];
   // Refuse directory symlinks as well as conflicting files; never follow them to write elsewhere.
-  const directories = ['mods', 'mods/linear-panel', 'layouts', 'config'];
+  const directories = ['mods', `mods/${mod}`, 'layouts', ...(!browser ? ['config'] : [])];
   for (const relative of directories) {
     const stat = await existing(path.join(home, relative));
     if (stat && (!stat.isDirectory() || stat.isSymbolicLink())) conflicts.push(relative);
@@ -83,15 +125,17 @@ export async function planInstall({ home = process.env.HERDR_APP_HOME || path.jo
   }
   for (const file of files) {
     // Nested icon directories get the same preflight protection.
-    let parent = path.dirname(path.join('mods/linear-panel', file));
-    while (parent !== 'mods/linear-panel') {
+    let parent = path.dirname(path.join('mods', mod, file));
+    while (parent !== path.join('mods', mod)) {
       const stat = await existing(path.join(home, parent));
       if (stat && (!stat.isDirectory() || stat.isSymbolicLink())) conflicts.push(parent);
       parent = path.dirname(parent);
     }
-    await add(path.join('mods/linear-panel', file), await fs.readFile(path.join(source, file)));
+    await add(path.join('mods', mod, file), await fs.readFile(path.join(source, file)));
   }
-  await add(`layouts/${layoutName}.json`, Buffer.from(generated));
+  await add(`layouts/${targetLayoutName}.json`, Buffer.from(generated));
+  const plan = () => ({ home, entries, conflicts: [...new Set(conflicts)], layoutName: targetLayoutName, activationCommand: activationFor(targetLayoutName) });
+  if (browser) return plan();
   const configPath = path.join(home, 'config/linear-panel.json');
   const configStat = await existing(configPath);
   if (configStat?.isFile() && !configStat.isSymbolicLink()) {
@@ -108,7 +152,7 @@ export async function planInstall({ home = process.env.HERDR_APP_HOME || path.jo
     const config = validateConfig({ team: team ?? 'ENG', workspace: workspace ?? 'example-workspace' });
     await add('config/linear-panel.json', Buffer.from(json({ team: config.team, workspace: config.workspace })));
   }
-  return { home, entries, conflicts: [...new Set(conflicts)] };
+  return plan();
 }
 
 export async function install(options = {}) {
@@ -133,18 +177,25 @@ export async function install(options = {}) {
 
 export async function cli(args = process.argv.slice(2)) {
   const [command, customization, ...flags] = args;
-  if (!['plan', 'install', 'check'].includes(command) || customization !== 'linear') throw new Error('Usage: node scripts/setup.mjs <plan|install|check> linear [--home PATH] [--team ENG] [--workspace example-workspace] [--yes]');
-  const options = {};
+  if (!['plan', 'install', 'check'].includes(command) || !['linear', 'workspace-browser'].includes(customization)) {
+    throw new Error('Usage: node scripts/setup.mjs <plan|install|check> <linear|workspace-browser> [--home PATH] [--yes]; linear: [--team ENG] [--workspace example-workspace]; workspace-browser: [--base-layout NAME]');
+  }
+  const options = { customization };
+  const flagsFor = customization === 'linear'
+    ? { '--home': 'home', '--team': 'team', '--workspace': 'workspace' }
+    : { '--home': 'home', '--base-layout': 'baseLayout' };
   let yes = false;
   for (let index = 0; index < flags.length; index++) {
     const flag = flags[index];
     if (flag === '--yes') { yes = true; continue; }
-    if (!['--home', '--team', '--workspace'].includes(flag) || !flags[index + 1] || flags[index + 1].startsWith('--')) throw new Error(`Invalid option: ${flag}`);
-    options[flag.slice(2)] = flags[++index];
+    if (!Object.hasOwn(flagsFor, flag) || !flags[index + 1] || flags[index + 1].startsWith('--')) throw new Error(`Invalid option: ${flag}`);
+    options[flagsFor[flag]] = flags[++index];
   }
   const plan = await planInstall(options);
   console.log(`Target: ${plan.home}`);
-  console.log('Access: local config and Keychain via security; read-only api.linear.app requests; Linear links via open. No credentials copied by setup.');
+  console.log(customization === 'linear'
+    ? 'Access: local config and Keychain via security; read-only api.linear.app requests; Linear links via open. No credentials copied by setup.'
+    : 'Access: folder listings/previews and Git status/diffs; explicit Commit stages and commits all repository changes. Setup copies files only.');
   for (const { relative, status } of plan.entries) console.log(`${status}: ${relative}`);
   for (const conflict of plan.conflicts) console.log(`conflict: ${conflict}`);
   if (plan.conflicts.length) return 1;
@@ -158,7 +209,7 @@ export async function cli(args = process.argv.slice(2)) {
   }
   const result = await install(options);
   console.log(`Created ${result.created.length} files. Active layout unchanged.`);
-  console.log(`Activate separately: ${activationCommand}`);
+  console.log(`Activate separately: ${result.activationCommand}`);
   return 0;
 }
 
