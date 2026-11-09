@@ -1,0 +1,17 @@
+Agents, Spaces and workspace chrome are adapted from Herdr v0.1.13,
+commit 93b097f6e29fcb2d90a30dea2f03ce4e5dee7981:
+https://github.com/herdrdev/herdr-app
+
+Herdr's source is licensed under Apache License 2.0; see LICENSE-HERDR.
+The adapted code has been modified for task-first rows, activity grouping,
+selected-idle visibility, compact space metadata, responsive height allocation,
+and a workspace-identity rail. Native agent lifecycle, terminal navigation,
+Git/worktree behavior and machine actions remain owned by Herdr.
+
+The copied SVGs originate in that revision's defaults/mods/workspace-chrome.
+Herdr's THIRD-PARTY-NOTICES identifies Lucide / Feather icons in shipped mods.
+See LICENSE-ICONS-LUCIDE.txt for the complete ISC and Feather MIT notices.
+
+New herdr-setup code is provided under the repository's MIT license.
+Crew (https://github.com/h4ckm1n-dev/herdr-mods/tree/main/crew) supplied visual
+inspiration only; no Crew code, scanners or telemetry are included.

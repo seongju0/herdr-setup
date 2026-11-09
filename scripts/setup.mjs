@@ -4,11 +4,14 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import { validateConfig } from '../customizations/linear/mods/linear-panel/model.js';
+import { validateConfig as validateGithubConfig } from '../customizations/github/mods/github-panel/model.js';
 
 const projectRoot = fileURLToPath(new URL('../', import.meta.url));
 export const layoutName = 'herdr-setup-linear';
 export const activationCommand = `herdr-app do layout.switch '{"name":"${layoutName}"}'`;
 export const workspaceLayoutName = 'herdr-setup-workspace-browser';
+export const githubLayoutName = 'herdr-setup-github';
+export const sidebarLayoutName = 'herdr-setup-sidebar';
 const activationFor = (name) => `herdr-app do layout.switch '${JSON.stringify({ name })}'`;
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
 
@@ -73,6 +76,70 @@ export function makeWorkspaceLayout(base) {
   return layout;
 }
 
+export function makeGithubLayout(base) {
+  const layout = structuredClone(base);
+  const find = layoutNodes(layout);
+  const tabs = find('tabs');
+  const panel = find('panel')?.node;
+  const body = find('panel-body');
+  if (tabs?.node.type !== 'block' || !tabs.parent?.children?.includes(tabs.node)
+    || panel?.type !== 'column' || body?.parent !== panel || body.node.type !== 'stack' || !Array.isArray(body.node.children)) {
+    throw new Error('Unsupported base layout: expected tabs block, panel column and panel-body stack. No files changed.');
+  }
+  if (find('github-panel') || find('github-button')) throw new Error('Base layout already contains GitHub IDs. No files changed.');
+  addTabButton(tabs, find, { id: 'github-button', type: 'block', size: { px: 86 }, content: { mod: 'github-panel', props: { button: true } } });
+  body.node.children.push({ id: 'github-panel', type: 'block', content: { mod: 'github-panel' } });
+  return layout;
+}
+
+export function makeSidebarLayout(base) {
+  const layout = structuredClone(base);
+  const fail = () => { throw new Error('Unsupported base layout: expected the shipped sidebar with unique IDs; merge sidebar manually. No files changed.'); };
+  const nodes = new Map();
+  function walk(node, parent) {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) fail();
+    if (node.id !== undefined) {
+      if (typeof node.id !== 'string' || nodes.has(node.id)) fail();
+      nodes.set(node.id, { node, parent });
+    }
+    if (node.content?.mod === 'sidebar') fail();
+    for (const key of ['children', 'floating']) {
+      if (node[key] !== undefined && !Array.isArray(node[key])) fail();
+      for (const child of node[key] ?? []) walk(child, node);
+    }
+  }
+  walk(layout);
+  const entry = nodes.get('sidebar'), sidebar = entry?.node;
+  if (sidebar?.type !== 'column' || entry.parent?.type !== 'row' || entry.parent.resizable === false
+    || !entry.parent.children?.includes(sidebar) || sidebar.children?.length !== 3 || sidebar.floating?.length) fail();
+  const [brand, lists, footer] = sidebar.children;
+  const only = (object, keys) => Object.keys(object).every(key => keys.includes(key));
+  const stock = (node, mod, footer = false) => node?.type === 'block'
+    && !node.children?.length && !node.floating?.length && node.content?.mod === mod
+    && only(node.content, ['mod', 'props'])
+    && only(node.content.props ?? {}, footer ? ['footer'] : [])
+    && (!footer || node.content.props?.footer === true);
+  if (brand.id !== 'brand' || !stock(brand, 'workspace-chrome') || brand.window_drag !== true
+    || lists.id !== 'sidebar-lists' || lists.type !== 'column' || lists.children?.length !== 2
+    || !only(lists, ['id', 'type', 'children', 'size', 'min'])
+    || footer.id !== 'sidebar-footer' || !stock(footer, 'workspace-chrome', true)) fail();
+  for (const mod of ['agents', 'spaces']) {
+    const child = lists.children.find(child => child.id === mod);
+    if (!stock(child, mod) || !only(child, ['id', 'type', 'size', 'min', 'content'])) fail();
+  }
+  Object.assign(sidebar, { size: { px: 312 }, min: 76, max: 480, ui_font: 'Geist', resizable: false });
+  brand.size = { px: 76 };
+  brand.content = { mod: 'sidebar', props: { view: 'brand' } };
+  lists.type = 'block';
+  lists.content = { mod: 'sidebar', props: { view: 'body' } };
+  lists.size = { weight: 1 };
+  lists.min = 0;
+  delete lists.children;
+  footer.size = { px: 44 };
+  footer.content = { mod: 'sidebar', props: { view: 'footer' } };
+  return layout;
+}
+
 async function existing(filename) {
   try { return await fs.lstat(filename); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
 }
@@ -90,31 +157,37 @@ async function sourceFiles(directory, prefix = '') {
 }
 
 // Read-only preflight. Existing local config is preserved unless explicit options disagree.
-export async function planInstall({ home = process.env.HERDR_APP_HOME || path.join(os.homedir(), '.config/herdr-app'), team, workspace, root = projectRoot, customization = 'linear', baseLayout = 'main' } = {}) {
-  if (!['linear', 'workspace-browser'].includes(customization)) throw new Error(`Unknown customization: ${customization}`);
-  const browser = customization === 'workspace-browser';
+export async function planInstall({ home = process.env.HERDR_APP_HOME || path.join(os.homedir(), '.config/herdr-app'), team, workspace, organization, ghPath, root = projectRoot, customization = 'linear', baseLayout } = {}) {
+  if (!['linear', 'workspace-browser', 'github', 'sidebar'].includes(customization)) throw new Error(`Unknown customization: ${customization}`);
+  const browser = customization === 'workspace-browser', github = customization === 'github', sidebar = customization === 'sidebar';
+  if ((github || sidebar) && baseLayout === undefined) throw new Error(`${github ? 'GitHub' : 'Sidebar'} requires an explicit --base-layout NAME.`);
+  if (baseLayout === undefined) baseLayout = 'main';
   if (typeof baseLayout !== 'string' || !baseLayout.trim() || /[/\\\0]/.test(baseLayout) || ['.', '..'].includes(baseLayout)) {
     throw new Error('Invalid base layout: use a layout name, not a path.');
   }
-  if (!browser && baseLayout !== 'main') throw new Error('--base-layout is only supported for workspace-browser.');
-  if (browser && (team !== undefined || workspace !== undefined)) throw new Error('workspace-browser does not use team or workspace options.');
+  if (!browser && !github && !sidebar && baseLayout !== 'main') throw new Error('--base-layout is only supported for workspace-browser, github or sidebar.');
+  if ((browser || github || sidebar) && (team !== undefined || workspace !== undefined)) throw new Error(`${customization} does not use team or workspace options.`);
+  if (!github && [organization, ghPath].some(value => value !== undefined)) throw new Error('GitHub options require the github customization.');
   home = path.resolve(home);
-  const mod = browser ? 'workspace-browser' : 'linear-panel';
-  const targetLayoutName = browser ? workspaceLayoutName : layoutName;
+  const mod = browser ? 'workspace-browser' : github ? 'github-panel' : sidebar ? 'sidebar' : 'linear-panel';
+  const targetLayoutName = browser ? workspaceLayoutName : github ? githubLayoutName : sidebar ? sidebarLayoutName : layoutName;
   const source = path.join(root, 'customizations', customization, 'mods', mod);
   const files = await sourceFiles(source);
   const requiredFiles = browser
     ? ['main.js', 'context.js', 'files.js', 'changes.js', 'directories.js', 'directory-search.js', 'folder-observer.js', 'folder-picker.js', 'folder-controls.js', 'mod.json', 'LICENSE', 'LICENSE-HERDR', 'NOTICE']
-    : ['main.js', 'api.js', 'model.js', 'mod.json'];
+    : sidebar
+      ? ['main.js', 'body.js', 'ui.js', 'chrome.js', 'agents.js', 'spaces.js', 'mod.json', 'LICENSE', 'LICENSE-HERDR', 'LICENSE-ICONS-LUCIDE.txt', 'NOTICE',
+        ...['search', 'sidebar', 'settings', 'plus', 'branch', 'spinner', 'check', 'pin', 'pin-off', 'clock', 'layers', 'chevron-right', 'chevron-down', 'monitor', 'server'].map(name => `icons/${name}.svg`)]
+      : ['main.js', 'api.js', 'model.js', 'mod.json'];
   for (const required of requiredFiles) {
     if (!files.includes(required)) throw new Error(`Missing source file: ${required}`);
   }
   const base = JSON.parse(await fs.readFile(path.join(home, 'layouts', `${baseLayout}.json`), 'utf8'));
-  const generated = json(browser ? makeWorkspaceLayout(base) : makeLayout(base));
+  const generated = json(browser ? makeWorkspaceLayout(base) : github ? makeGithubLayout(base) : sidebar ? makeSidebarLayout(base) : makeLayout(base));
   const entries = [];
   const conflicts = [];
   // Refuse directory symlinks as well as conflicting files; never follow them to write elsewhere.
-  const directories = ['mods', `mods/${mod}`, 'layouts', ...(!browser ? ['config'] : [])];
+  const directories = ['mods', `mods/${mod}`, 'layouts', ...(!browser && !sidebar ? ['config'] : [])];
   for (const relative of directories) {
     const stat = await existing(path.join(home, relative));
     if (stat && (!stat.isDirectory() || stat.isSymbolicLink())) conflicts.push(relative);
@@ -139,7 +212,30 @@ export async function planInstall({ home = process.env.HERDR_APP_HOME || path.jo
   }
   await add(`layouts/${targetLayoutName}.json`, Buffer.from(generated));
   const plan = () => ({ home, entries, conflicts: [...new Set(conflicts)], layoutName: targetLayoutName, activationCommand: activationFor(targetLayoutName) });
-  if (browser) return plan();
+  if (browser || sidebar) return plan();
+  if (github) {
+    const relative = 'config/github-panel.json';
+    const stat = await existing(path.join(home, relative));
+    if (stat) {
+      let valid = false;
+      if (stat.isFile() && !stat.isSymbolicLink()) {
+        try {
+          const config = validateGithubConfig(JSON.parse(await fs.readFile(path.join(home, relative), 'utf8')));
+          const requested = validateGithubConfig({
+            organization: organization === undefined ? config.organization : organization,
+            ghPath: ghPath === undefined ? config.ghPath : ghPath, demo: config.demo,
+          });
+          valid = config.organization === requested.organization && config.ghPath === requested.ghPath;
+        } catch { /* Never expose local config contents. */ }
+      }
+      entries.push({ relative, status: valid ? 'preserved' : 'conflict' });
+      if (!valid) conflicts.push(relative);
+    } else {
+      const config = validateGithubConfig({ organization, ...(ghPath === undefined ? {} : { ghPath }) });
+      await add(relative, Buffer.from(json({ organization: config.organization, ghPath: config.ghPath })));
+    }
+    return plan();
+  }
   const configPath = path.join(home, 'config/linear-panel.json');
   const configStat = await existing(configPath);
   if (configStat?.isFile() && !configStat.isSymbolicLink()) {
@@ -181,13 +277,15 @@ export async function install(options = {}) {
 
 export async function cli(args = process.argv.slice(2)) {
   const [command, customization, ...flags] = args;
-  if (!['plan', 'install', 'check'].includes(command) || !['linear', 'workspace-browser'].includes(customization)) {
-    throw new Error('Usage: node scripts/setup.mjs <plan|install|check> <linear|workspace-browser> [--home PATH] [--yes]; linear: [--team ENG] [--workspace example-workspace]; workspace-browser: [--base-layout NAME]');
+  if (!['plan', 'install', 'check'].includes(command) || !['linear', 'workspace-browser', 'github', 'sidebar'].includes(customization)) {
+    throw new Error('Usage: node scripts/setup.mjs <plan|install|check> <linear|workspace-browser|github|sidebar> [--home PATH] [--yes]; linear: [--team ENG] [--workspace example-workspace]; workspace-browser/github/sidebar: [--base-layout NAME]; github: --organization ORG [--gh-path /absolute/gh]');
   }
   const options = { customization };
   const flagsFor = customization === 'linear'
     ? { '--home': 'home', '--team': 'team', '--workspace': 'workspace' }
-    : { '--home': 'home', '--base-layout': 'baseLayout' };
+    : customization === 'github'
+      ? { '--home': 'home', '--base-layout': 'baseLayout', '--organization': 'organization', '--gh-path': 'ghPath' }
+      : { '--home': 'home', '--base-layout': 'baseLayout' };
   let yes = false;
   for (let index = 0; index < flags.length; index++) {
     const flag = flags[index];
@@ -199,7 +297,11 @@ export async function cli(args = process.argv.slice(2)) {
   console.log(`Target: ${plan.home}`);
   console.log(customization === 'linear'
     ? 'Access: local config and Keychain via security; read-only api.linear.app requests; Linear links via open. No credentials copied by setup.'
-    : 'Access: folder listings/previews and Git status/diffs; explicit Commit stages and commits all repository changes. Setup copies files only.');
+    : customization === 'github'
+      ? 'Access: local GitHub config; existing gh authentication and read-only github.com GraphQL queries via exec; validated PR links via open. Setup copies files only; no credentials copied.'
+      : customization === 'sidebar'
+        ? 'Access: native agent/workspace state; read-only Git, local watchers and machine inventory; native selection/pins and worktree-order correction; reconnect only on explicit action. No transcript scanners or new config. Setup copies files only.'
+        : 'Access: folder listings/previews and Git status/diffs; explicit Commit stages and commits all repository changes. Setup copies files only.');
   for (const { relative, status } of plan.entries) console.log(`${status}: ${relative}`);
   for (const conflict of plan.conflicts) console.log(`conflict: ${conflict}`);
   if (plan.conflicts.length) return 1;
