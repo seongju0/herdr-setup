@@ -33,7 +33,8 @@ export async function discover(root) {
   let result;
   try { result = await exec("fd", args); }
   catch (error) {
-    if (!String(error).includes("cannot start fd: program not found")) throw error;
+    // Retry only a missing executable, including the native host's launch error.
+    if (!/cannot start fd: program not found|cannot run fd: No such file or directory \(os error 2\)/.test(String(error))) throw error;
     result = await exec(`${home()}/.pi/agent/bin/fd`, args);
   }
   if (result.code !== 0) throw new Error(result.stderr || `Cannot search ${root}`);

@@ -8,7 +8,8 @@ The folder control inside either the Files or Changes header opens a native, key
 
 - **Follow session** uses Pi's actual session directory. `/move` and session resume update both panels. Focusing a shell leaves the Pi selection alone; with multiple Pi panes, focusing another Pi makes it current.
 - **Choose a folder** to pin both panels. Later Pi directory changes leave the pin intact. Choose Follow session to immediately return to Pi's latest directory.
-- **Search directories** with case-insensitive fuzzy matching and space-separated terms, then use Up/Down and Enter to select, or Esc to cancel. Paste an absolute path or local `~/` path to choose a folder directly, including one outside your search roots. There is no OS Browse dialog.
+- **Search directories** with case-insensitive fuzzy matching and space-separated terms, then use Up/Down and Enter to select, or Esc to cancel. There is no OS Browse dialog.
+- **Complete a local path** by typing an absolute or `~/` path: `~/Wo` offers matching directories in your home, and `~/Work/` lists directories inside Work—even outside your search roots. Append `/` to browse inside a suggested directory. “Use path” still lets you select the entered folder directly.
 
 Folder selection leaves your terminals where they are. The picker shows full paths and machine context. An unreadable or offline pin stays selected with an error rather than silently switching to a different folder.
 
@@ -30,6 +31,8 @@ Optional configuration lives in **`~/.config/herdr-app/config/workspace-browser.
 - A missing file/setting or an empty list searches beneath the **current selected folder**, falling back to the active space's folder if no selected folder is available. `~/Work` and `~/Mine` are examples, not defaults.
 - Set `"searchRoots": ["~"]` explicitly to search across your home directory. Invalid settings or unreadable roots report errors rather than silently expanding the scope.
 - Config is read when the finder opens; close and reopen it to pick up edits or newly created folders. This configuration limits search discovery, not access to an explicitly entered path.
+
+Ordinary fuzzy queries search the scoped discovery snapshot. Explicit local path completion instead reads one parent directory at a time, caching that bounded listing while you type the last component. It does not recursively scan the entered path or change your configured roots. Listings exceeding 500 entries show a partial-result notice; a failed listing still leaves explicit path entry available.
 
 The flat results include nested directories, including hidden and Git-ignored folders, but exclude files, `.git` and `node_modules`. Discovery does not follow directory symlinks recursively. Each opening takes a bounded snapshot of up to 20,000 directories per root; a partial-result notice explains limits or root failures. At most 50 matching choices are shown, deduplicated with in-scope session/pane/space/recent folders.
 

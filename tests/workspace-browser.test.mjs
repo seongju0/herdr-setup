@@ -31,6 +31,9 @@ async function nativeHost() {
         else if (method === 'children') args[0].forEach(add);
         else if (method === 'on_click') node.click = args[0];
         else if (method === 'on_key_down') node.keydown = args[0];
+        else if (method === 'h') node.height = args[0];
+        else if (method === 'flex_shrink_0') node.shrink = false;
+        else if (method === 'overflow_y_scrollbar') node.scrollbar = true;
         else if (method === 'when' && args[0]) args[1](proxy);
         return proxy;
       };
@@ -128,7 +131,8 @@ async function nativeHost() {
   return { state, render, settle, click, open,
     get files() { return files.implementation; }, get changes() { return changes.implementation; }, get picker() { return picker?.implementation; },
     async runNextTask() { assert.ok(queue.length); await queue.shift()(cx); render(); },
-    text: view => text(trees[view]), key(key) { trees.picker.keydown({ key }, cx); render(); },
+    text: view => text(trees[view]), node: (view, id) => find(trees[view], id),
+    key(key) { trees.picker.keydown({ key }, cx); render(); },
     type(value) { picker.implementation.input.emit('change', value); render(); },
     submit() { picker.implementation.input.emit('submit'); render(); },
     async pin(path) { open(); this.type(path); this.submit(); await settle(); },
@@ -168,7 +172,7 @@ test('native directory picker and Files/Changes follow live Pi sessions, pin/unp
   const beforeTyping = host.state.calls.filter(c => c.cmd === 'fd').length;
   host.type('unknown deep'); host.submit(); await host.settle();
   assert.equal(host.files.root, '/next/unknown deep/sub'); assert.equal(host.changes.root, '/next/unknown deep');
-  assert.equal(host.state.calls.filter(c => c.cmd === 'fd').length, beforeTyping, 'Typing never spawns another process');
+  assert.equal(host.state.calls.filter(c => c.cmd === 'fd').length, beforeTyping, 'Fuzzy typing never starts another discovery process');
   host.state.config = JSON.stringify({ searchRoots: ['/only-root'] });
   host.open('changes'); await host.settle();
   assert.equal(host.picker.rows().some(r => r.cwd.startsWith('/next/')), false, 'Confirmed recents outside the new roots are excluded');
@@ -222,6 +226,36 @@ test('native directory picker and Files/Changes follow live Pi sessions, pin/unp
   host.state.focus = { space: 's', tab: 'a', pane: 'shell-pane', terminal: 't2', cwd: '/shell' };
   host.render(); await host.settle(); assert.equal(host.files.root, '/shell');
   assert.match(host.text('files'), /Pane · \/shell/);
+
+  const slowPath = deferred();
+  host.state.config = null;
+  host.state.hook = c => c.cmd !== 'sh' ? null
+    : c.args.at(-1) === '/home/synthetic' ? Promise.resolve(ok('d\0Work\0d\0Other\0f\0Work-file\0'))
+    : c.args.at(-1) === '/home/synthetic/Work' ? Promise.resolve(ok('d\0Cartwheel\0d\0Other project\0f\0Cartwheel-file\0d\0.git\0d\0node_modules\0'))
+    : c.args.at(-1) === '/home/synthetic/Slow' ? slowPath.promise : null;
+  host.open(); await host.settle();
+  assert.equal(host.node('picker', 'folder-results').height, 32, 'A single result has a full visible row, not a flex-shrunk viewport');
+  assert.equal(host.node('picker', 'folder-results').shrink, false);
+  assert.equal(host.node('picker', 'folder-picker').children.some(n => n.scrollbar && !n.children.length), false, 'Empty messages cannot reserve a scroll region above results');
+  const scansBeforeCompletion = host.state.calls.filter(c => c.cmd === 'fd').length;
+  host.type('~/Wo'); await host.settle();
+  assert.ok(host.picker.rows().some(r => r.cwd === '/home/synthetic/Work'), 'Tilde paths expand before matching parent directory choices');
+  host.type('~/Wor'); await host.settle();
+  assert.equal(host.state.calls.filter(c => c.cmd === 'sh' && c.args.at(-1) === '/home/synthetic').length, 1, 'Typing a component reuses one parent listing');
+  host.type('~/Work/'); await host.settle();
+  assert.deepEqual(Array.from(host.picker.rows(), r => r.cwd), ['/home/synthetic/Work/', '/home/synthetic/Work/Cartwheel', '/home/synthetic/Work/Other project'], 'Explicit directories outside the default root offer child directories, not files or dependency internals');
+  assert.equal(host.node('picker', 'folder-results').height, 96);
+  assert.equal(host.node('picker', 'folder-choice-0').height, 32);
+  host.type('~/Slow/'); await host.settle();
+  host.type('~/Work/Car'); await host.settle();
+  slowPath.resolve(ok('d\0Old result\0')); await host.settle();
+  assert.deepEqual(Array.from(host.picker.rows(), r => r.cwd), ['/home/synthetic/Work/Car', '/home/synthetic/Work/Cartwheel'], 'A late listing cannot replace the current path results');
+  assert.equal(host.state.calls.filter(c => c.cmd === 'sh' && c.args.at(-1) === '/home/synthetic/Work').length, 1, 'Returning to a parent uses its per-dialog snapshot');
+  assert.equal(host.state.calls.filter(c => c.cmd === 'fd').length, scansBeforeCompletion, 'Explicit path completion never starts a recursive scan');
+  host.key('down'); host.submit(); await host.settle();
+  assert.equal(host.saved().pin.cwd, '/home/synthetic/Work/Cartwheel');
+  assert.equal(host.files.root, '/home/synthetic/Work/Cartwheel', 'A completed directory follows normal validation and shared selection');
+  host.state.hook = null;
 });
 
 test('selection validation, non-Git folders, stale IO/commit guards and remote routing preserve the captured target', async () => {
@@ -245,7 +279,8 @@ test('selection validation, non-Git folders, stale IO/commit guards and remote r
   // Publish the actual picker choice, then click before the scheduled panel
   // refresh can clear the old repository/message.
   host.changes.input.emit('change', 'stale click');
-  host.open(); await host.settle(); host.type('/changed/sub'); host.submit(); await host.runNextTask();
+  host.open(); await host.settle(); host.type('/changed/sub'); await host.settle();
+  host.submit(); await host.runNextTask();
   host.click('changes', 'commit'); await host.settle(); assert.equal(writes().length, 0, 'Stale repo click must never write');
 
   const add = deferred();
@@ -314,9 +349,23 @@ test('selection validation, non-Git folders, stale IO/commit guards and remote r
   host.type('dir-19998'); assert.equal(host.picker.rows()[0].cwd, '/space/dir-19998');
   host.type(''); host.click('picker', 'folder-choice-0'); await host.settle();
   assert.equal(host.saved('b').pin.cwd, '/space', 'Known folders still validate and pin after a failed root');
-  host.state.hook = c => c.cmd === 'fd' ? Promise.reject(new Error('cannot start fd: program not found')) : null;
+  host.state.config = JSON.stringify({ searchRoots: ['/space'] });
+  const fallback = '/home/synthetic/.pi/agent/bin/fd';
+  for (const message of ['`herdr.exec`: cannot run fd: No such file or directory (os error 2)', 'cannot start fd: program not found']) {
+    const before = fdCalls().length;
+    host.state.hook = c => c.cmd === 'fd' ? Promise.reject(new Error(message))
+      : c.cmd === fallback ? Promise.resolve(ok('/space/fallback-result/\0')) : null;
+    host.open(); await host.settle();
+    assert.deepEqual(fdCalls().slice(before).map(c => c.cmd), ['fd', fallback], 'A missing executable invokes the local fallback once');
+    host.type('fallback-result');
+    assert.equal(host.picker.rows()[0]?.cwd, '/space/fallback-result', 'Fallback discovery produces selectable directory results');
+    host.key('escape');
+  }
+  const beforePermission = fdCalls().length;
+  host.state.hook = c => c.cmd === 'fd' ? Promise.reject(new Error('`herdr.exec`: cannot run fd: Permission denied (os error 13)')) : null;
   host.open(); await host.settle();
-  assert.ok(fdCalls().some(c => c.cmd === '/home/synthetic/.pi/agent/bin/fd'), 'Only missing executable invokes the local fallback');
+  assert.deepEqual(fdCalls().slice(beforePermission).map(c => c.cmd), ['fd'], 'Other launch failures must not invoke the fallback');
+  assert.match(host.text('picker'), /Permission denied/);
   host.key('escape');
 
   const scan = deferred();
@@ -331,6 +380,12 @@ test('selection validation, non-Git folders, stale IO/commit guards and remote r
   scan.resolve(ok('/space/after-close/\0')); await host.settle();
   assert.equal(dismissed.discovered.length, 0, 'Late discovery cannot update a closed view');
   assert.equal(host.saved('b').pin.cwd, published, 'Discovery never publishes a selection');
+  const closedListing = deferred();
+  host.state.hook = c => c.cmd === 'sh' && c.args.at(-1) === '/home/synthetic/Closing' ? closedListing.promise : null;
+  const closedPicker = host.open(); host.type('~/Closing/'); await host.settle(); host.key('escape');
+  closedListing.resolve(ok('d\0too late\0')); await host.settle();
+  assert.equal(closedPicker.pathListings.get('/home/synthetic/Closing').paths.length, 0, 'A closed picker cannot receive completion results');
+  assert.equal(host.saved('b').pin.cwd, published);
   host.state.config = null; host.state.hook = null;
 
   host.state.spaces.push({ id: 'remote/s', active: false, machine: 'remote', folder: '/srv/project', tabs: [{ id: 'remote/a', active: true }] });
