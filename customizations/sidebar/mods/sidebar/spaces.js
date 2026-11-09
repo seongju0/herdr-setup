@@ -280,7 +280,7 @@ export default class SpacesSection {
       return layout === "loading" || (!layout && this.machines.some(k => k.name === m && k.state === "connected"))
         || spaces().some(s => (s.machine ?? null) === m && !this.shown.has(s.id));
     };
-    const loadingRow = m => ({ height: 28, element: div().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(8).text_size(12).text_color(t.dim).child("Loading…") });
+    const loadingRow = m => ({ height: 24, element: div().id(`machine-loading-${m ?? "local"}`).h(24).flex_none().px(8).text_size(11).text_color(t.dim).child("Loading…") });
     if (!remote.length) return loading(null) && !rows.length ? [loadingRow(null)] : rows.map(draw);
     const machineNames = [null, ...remote];
     return machineNames.flatMap((m) => {
@@ -293,7 +293,7 @@ export default class SpacesSection {
       const head = h_flex().id(`machine-${m ?? "local"}`).min_w(0)
         .tooltip(`${m ?? "This computer"} · ${machine?.state ?? "connected"}`)
         .accessibility_label(`${folded ? "Expand" : "Fold"} ${m ?? "This computer"}`)
-        .h(26).flex_none().px(8).gap(7).items_center().text_size(11).text_color(t.dim)
+        .h(24).flex_none().px(8).gap(7).items_center().text_size(10).text_color(t.dim)
         .cursor_pointer().hover(s => s.bg(t.hover))
         .on_click((_e, cx) => {
           folded ? this.folded.delete(m) : this.folded.add(m);
@@ -314,12 +314,12 @@ export default class SpacesSection {
             .on_click((_e, cx) => { cx.stop_propagation(); run("space.new", { machine: m ?? "" }); }).child("+")))
           .child(div().size(6).rounded(3).flex_none().bg(connected ? t.ansi2 : t.dim))
           .child(svg(`mods/sidebar/icons/chevron-${folded ? "right" : "down"}.svg`).size(11).flex_none());
-      const empty = h_flex().id(`machine-new-${m ?? "local"}`).tooltip(`New space on ${m ?? "this computer"}`).accessibility_label(`New space on ${m ?? "this computer"}`).h(28).flex_none().px(8).gap(7).items_center().rounded(7)
-        .text_size(12).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
+      const empty = h_flex().id(`machine-new-${m ?? "local"}`).tooltip(`New space on ${m ?? "this computer"}`).accessibility_label(`New space on ${m ?? "this computer"}`).h(24).flex_none().px(8).gap(7).items_center().rounded(7)
+        .text_size(11).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
         .on_click(() => run("space.new", { machine: m ?? "" }))
         .child(svg("mods/sidebar/icons/plus.svg").size(12)).child("New space there");
-      if (rebuilt) return [{ element: head, height: 26 }];
-      return [{ element: head, height: 26 }, ...(folded ? [] : mine.length ? mine.map(draw) : [loading(m) ? loadingRow(m) : { element: empty, height: 28 }])];
+      if (rebuilt) return [{ element: head, height: 24 }];
+      return [{ element: head, height: 24 }, ...(folded ? [] : mine.length ? mine.map(draw) : [loading(m) ? loadingRow(m) : { element: empty, height: 24 }])];
     });
   }
 
@@ -339,7 +339,7 @@ export default class SpacesSection {
   }
 
   gitTail(g, metadata, t) {
-    return h_flex().min_w(0).gap(5).items_center().text_size(11).text_color(t.dim)
+    return h_flex().min_w(0).gap(5).items_center().text_size(10).text_color(t.dim)
       .when(Boolean(metadata), el => el.child(div().flex_1().min_w(0).truncate().child(metadata)))
       .when(g.ahead > 0, el => el.child(div().flex_none().text_color(t.muted).child(`↑${g.ahead}`)))
       .when(g.behind > 0, el => el.child(div().flex_none().text_color(t.muted).child(`↓${g.behind}`)));
@@ -395,7 +395,7 @@ export default class SpacesSection {
         .when(Boolean(tree), el => el.pl(18).child(icon("branch", 13, t.dim)))
         .when(!tree, el => el.child(avatar(t, w)))
         .child(v_flex().flex_1().min_w(0).justify_center()
-          .child(div().min_w(0).truncate().text_size(13).text_color(t.foreground).child(w.name))
+          .child(div().min_w(0).truncate().text_size(12).text_color(t.foreground).child(w.name))
           .when(hasMetadata, el => el.child(this.gitTail(g, metadata, t))))
         .child(statusGlyph(t, status, 11)));
   }
@@ -403,14 +403,14 @@ export default class SpacesSection {
   compact({ w, g }, t, statusBySpace) {
     const status = statusBySpace.get(w.id) ?? w.status;
     const tip = this.spaceTip(w, status, g);
-    return h_flex().id(`space-${w.id}`).h(40).flex_none().min_w(0).rounded(7)
+    return h_flex().id(`space-${w.id}`).h(36).flex_none().min_w(0).rounded(7)
       .items_center().justify_center().gap(3).cursor_pointer()
       .tooltip(tip).accessibility_label(tip)
       .when(w.active, el => el.bg(t.selected))
       .hover(el => el.bg(t.hover))
       .on_click(() => run("space.select", { id: w.id }))
       .on_mouse_down("right", () => this.menu(w))
-      .child(avatar(t, w, 24)).child(statusGlyph(t, status, 10));
+      .child(avatar(t, w, 22)).child(statusGlyph(t, status, 10));
   }
 
   render(_cx, { collapsed = false, statusBySpace = new Map(), maxHeight = 224 } = {}) {
@@ -430,15 +430,15 @@ export default class SpacesSection {
     const rows = ordered.map(r => {
       const metadata = this.metadata(r.g, r.tree, r.w.name);
       const hasMetadata = Boolean(metadata || r.g?.ahead || r.g?.behind);
-      return { ...r, metadata, hasMetadata, height: hasMetadata ? 46 : r.tree ? 28 : 30 };
+      return { ...r, metadata, hasMetadata, height: hasMetadata ? 38 : r.tree ? 24 : 28 };
     });
     const prepared = this.grouped(t, rows, statusBySpace);
-    const padding = 8;
-    const naturalHeight = 32 + padding + prepared.reduce((height, row) => height + row.height, 0);
+    const padding = 6;
+    const naturalHeight = 28 + padding + prepared.reduce((height, row) => height + row.height, 0);
     return v_flex().id("spaces-section").h(Math.min(naturalHeight, maxHeight)).flex_none()
       .min_h(0).min_w(0).overflow_hidden().bg(t.chrome).border_t(1).border_color(t.border)
-      .child(h_flex().h(32).flex_none().pl(16).pr(10).items_center().justify_between()
-        .text_size(11).text_color(t.dim).child("Spaces")
+      .child(h_flex().h(28).flex_none().pl(16).pr(10).items_center().justify_between()
+        .text_size(10).text_color(t.dim).child("Spaces")
         .child(button(t, "space-new", "plus", "New space on this computer", () => run("space.new", { machine: "" }))))
       .child(v_flex().id("spaces-scroll").flex_1().min_h(0).min_w(0).px(8).pb(padding)
         .overflow_y_scrollbar().mode("always")

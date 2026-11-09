@@ -1,6 +1,6 @@
 # Minimal sidebar
 
-An activity-first native Herdr sidebar: task names are the headline, workspace context is quieter, and idle sessions stay available without dominating the list.
+An activity-first native Herdr sidebar: task names are the headline, workspace context is quieter, and idle sessions stay available without dominating the list. Compact defaults use 12px task names, 10px metadata and 46px agent rows; terminal fonts and app zoom are unchanged.
 
 ## Layout
 

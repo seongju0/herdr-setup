@@ -3,7 +3,7 @@ import { div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { layout, run, shared, setShared } from "herdr";
 
-export const SIZE = { title: 13, body: 12, meta: 11, micro: 10 };
+export const SIZE = { title: 12, body: 11, meta: 10, micro: 10 };
 export const icon = (name, size = 14, color) => svg(`mods/sidebar/icons/${name}.svg`).size(size).flex_none()
   .when(Boolean(color), el => el.text_color(color));
 
@@ -32,7 +32,7 @@ export function toggleSidebar() {
 }
 
 export function button(t, id, name, tip, onClick) {
-  return div().id(id).size(26).flex_none().rounded(6).flex().items_center().justify_center()
+  return div().id(id).size(24).flex_none().rounded(6).flex().items_center().justify_center()
     .text_color(t.muted).cursor_pointer().tooltip(tip).accessibility_label(tip)
     .hover(el => el.bg(t.hover).text_color(t.foreground))
     .on_mouse_down("left", (_event, cx) => cx.stop_propagation())
@@ -51,7 +51,7 @@ export function statusGlyph(t, status, size = 12) {
   return h_flex().w(16).h(16).flex_none().items_center().justify_center().child(glyph);
 }
 
-export function avatar(t, space, size = 22) {
+export function avatar(t, space, size = 20) {
   const colors = shared("space.colors") ?? {};
   const palette = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
   const hash = [...space.id].reduce((value, c) => (value * 31 + c.codePointAt(0)) >>> 0, 0);
@@ -59,6 +59,6 @@ export function avatar(t, space, size = 22) {
   const fill = saved.startsWith("#") ? saved : t[saved] ?? t.muted;
   const tint = /^#[a-f\d]{6}$/i.test(fill ?? "") ? `${fill}20` : t.surface;
   return h_flex().size(size).flex_none().rounded(6).bg(tint).text_color(fill)
-    .items_center().justify_center().text_size(11).font_semibold()
+    .items_center().justify_center().text_size(10).font_semibold()
     .child([...space.name][0]?.toUpperCase() ?? "?");
 }

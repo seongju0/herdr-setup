@@ -247,7 +247,9 @@ test('U3 native body sizing, rail navigation order and independent brand/footer 
   assert.equal(host.node('spaces-scroll').styles.overflow_y_scrollbar, true, 'Spaces has its own scroll region');
   assert.equal(host.node('spaces-section').styles.h, 114, 'Spaces is capped at 38% of measured body height');
   assert.equal(host.node('spaces-section').styles.flex_none, true);
-  assert.equal(host.node('space-s0').styles.h, 46);
+  assert.equal(host.node('space-s0').styles.h, 38, 'Compact workspace metadata still has a two-line row');
+  assert.equal(host.node('ag-a').styles.h, 46, 'Compact agent row keeps its title and metadata');
+  assert.equal(host.nodes().find(node => node?.children?.includes('Sizing task')).styles.text_size, 12);
   assert.match(host.text('space-s0'), /Synthetic long workspace 0.*feature\/synthetic-long-branch.*↑2.*↓3/);
   assert.ok(host.node('space-s1').children.some(n => n?.children?.some(c => c?.asset === 'mods/sidebar/icons/branch.svg')), 'Worktree retains its nested branch marker');
   assert.match(host.text('machine-loading-loading'), /Loading/);

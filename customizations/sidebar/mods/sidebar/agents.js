@@ -121,9 +121,9 @@ export default class AgentsSection {
   }
 
   sortMenu(t) {
-    return v_flex().w_full().p(5).bg(t.popover).text_size(12.8)
-      .child(div().px(8).pt(4).pb(6).text_size(11).text_color(t.dim).child("Sort agents"))
-      .children(SORTS.map(s => h_flex().id(`sort-${s.id}`).h(31).px(8).gap(9).rounded(7).items_center()
+    return v_flex().w_full().p(5).bg(t.popover).text_size(12)
+      .child(div().px(8).pt(4).pb(6).text_size(10).text_color(t.dim).child("Sort agents"))
+      .children(SORTS.map(s => h_flex().id(`sort-${s.id}`).h(28).px(8).gap(9).rounded(7).items_center()
         .text_color(t.foreground).hover(el => el.bg(t.hover)).on_click(() => { setShared(SORT_KEY, s.id); closeOverlay(props()?.overlay); })
         .child(icon(s.icon)).child(div().flex_1().child(s.label)).when(s.id === sortOf().id, el => el.child(icon("check")))));
   }
@@ -131,12 +131,12 @@ export default class AgentsSection {
   subRow(t, s, model) {
     const k = s.t, status = kidStatus(k, model.listed);
     const label = k.name || k.template || k.program?.name || k.address;
-    return h_flex().id(`sub-${k.address}`).pl(32).pr(8).h(27).flex_none().gap(5).rounded(7).items_center()
+    return h_flex().id(`sub-${k.address}`).pl(32).pr(8).h(24).flex_none().gap(5).rounded(7).items_center()
       .when(k.address === model.shown, el => el.bg(t.raised)).hover(el => el.bg(t.hover))
       .tooltip(`${label} · ${k.address} · ${status}`).accessibility_label(`${label}, ${status}`)
       .on_click(() => run("terminal.peek", { terminal: k.address }))
       .children(s.lines.map(line => div().w(9).flex_none().text_color(t.dim).child(line)))
-      .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted).child(label))
+      .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted).child(label))
       .child(statusGlyph(t, status));
   }
 
@@ -144,19 +144,19 @@ export default class AgentsSection {
     const label = model.labels.get(a.address), subs = model.descendants.get(a.address), status = model.effective.get(a.address);
     const tip = `${label.title} · ${label.secondary} · ${a.address} · ${a.status}${status !== a.status ? `; effective ${status} (child attention or retained completion)` : ""}`;
     const fold = this.folded.has(a.address);
-    return h_flex().id(`ag-${a.address}`).h(56).flex_none().px(8).gap(8).rounded(8).items_center()
+    return h_flex().id(`ag-${a.address}`).h(46).flex_none().px(8).gap(8).rounded(8).items_center()
       .when(a.focused, el => el.bg(t.selected)).hover(el => el.bg(t.hover)).cursor_pointer()
       .tooltip(tip).accessibility_label(tip).on_click(() => run("pane.focus", { pane: a.pane }))
       .on_hover((on, cx) => { this.hovered = on ? a.address : null; cx.notify(); })
       .child(statusGlyph(t, status, 14))
-      .child(v_flex().flex_1().min_w(0).gap(3)
-        .child(div().truncate().text_size(13).font_medium().text_color(t.foreground).child(label.title))
-        .child(div().truncate().text_size(11).text_color(t.muted).child(label.secondary)))
+      .child(v_flex().flex_1().min_w(0).gap(2)
+        .child(div().truncate().text_size(12).font_medium().text_color(t.foreground).child(label.title))
+        .child(div().truncate().text_size(10).text_color(t.muted).child(label.secondary)))
       .when(subs.length > 0, el => el.child(div().id(`fold-${a.address}`).flex_none().h(20).px(2).flex().items_center()
         .tooltip(`${fold ? "Expand" : "Fold"} ${subs.length} child agents`).accessibility_label("Toggle child agents")
         .on_click((_e, cx) => { cx.stop_propagation(); fold ? this.folded.delete(a.address) : this.folded.add(a.address); cx.notify(); })
         .child(icon(fold ? "chevron-right" : "chevron-down", 11)).when(fold, el => el.child(String(subs.length)))))
-      .child(div().w(30).flex_none().text_right().text_size(11).text_color(t.dim)
+      .child(div().w(30).flex_none().text_right().text_size(10).text_color(t.dim)
         .tooltip("Since last observed agent-state change; not task elapsed time or ETA")
         .child(duration(model.now - this.changed[a.address].at)))
       .child(div().w(20).flex_none().child(div().id(`pin-${a.address}`).p(2).rounded(4)
@@ -170,22 +170,22 @@ export default class AgentsSection {
     const t = theme();
     const rows = model.groups.flatMap(g => {
       const folded = this.folded.has(g.id);
-      const header = h_flex().id(g.id).h(30).flex_none().px(8).gap(6).items_center().text_size(11).text_color(t[g.status] ?? t.dim)
+      const header = h_flex().id(g.id).h(26).flex_none().px(8).gap(6).items_center().text_size(10).text_color(t[g.status] ?? t.dim)
         .tooltip(`${g.label}: ${g.members.length}`).accessibility_label(`${g.label}, ${g.members.length}, ${folded ? "folded" : "expanded"}`)
         .on_click((_e, cx) => { cx.stop_propagation(); folded ? this.folded.delete(g.id) : this.folded.add(g.id); cx.notify(); })
         .child(icon(folded ? "chevron-right" : "chevron-down", 11)).child(g.label).child(String(g.members.length));
       return [header, ...(folded ? [] : g.members.flatMap(a => [this.row(t, a, model), ...(this.folded.has(a.address) ? [] : model.descendants.get(a.address).map(s => this.subRow(t, s, model)))]))];
     });
-    return v_flex().id("agents").flex_1().min_h(0).min_w(0).text_size(13)
-      .child(h_flex().h(36).flex_none().px(16).gap(8).items_center()
-        .child(div().flex_1().text_size(11).text_color(t.dim).child("Agents"))
-        .when(model.attentionCount > 0, el => el.child(div().id("ag-blocked").text_size(11).text_color(t.blocked)
+    return v_flex().id("agents").flex_1().min_h(0).min_w(0).text_size(12)
+      .child(h_flex().h(30).flex_none().px(16).gap(8).items_center()
+        .child(div().flex_1().text_size(10).text_color(t.dim).child("Agents"))
+        .when(model.attentionCount > 0, el => el.child(div().id("ag-blocked").text_size(10).text_color(t.blocked)
           .tooltip("Focus next agent needing you").accessibility_label(`${model.attentionCount} agents need you`)
           .on_click(() => { const index = model.attention.findIndex(a => a.focused); const next = model.attention[(index + 1) % model.attention.length]; run("pane.focus", { pane: next.pane }); })
           .child(`${model.attentionCount} need you`)))
         .child(button(t, "ag-sort", sortOf().icon, `Sort agents: ${sortOf().label}`, () => openOverlay({ mod: "sidebar", kind: "popup", width: 200, height: 140, props: { view: "agents-sort" } }))))
-      .when(!model.list.length, el => el.child(div().px(16).text_size(12).text_color(t.dim).child("No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not.")))
-      .when(model.list.length > 0 && model.list.every(a => model.effective.get(a.address) === "idle"), el => el.child(div().px(16).text_size(12).text_color(t.muted).child("Nothing waiting on you")))
+      .when(!model.list.length, el => el.child(div().px(16).text_size(11).text_color(t.dim).child("No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not.")))
+      .when(model.list.length > 0 && model.list.every(a => model.effective.get(a.address) === "idle"), el => el.child(div().px(16).text_size(11).text_color(t.muted).child("Nothing waiting on you")))
       .child(v_flex().id("ag-list").flex_1().min_h(0).px(8).overflow_y_scrollbar().mode("always").children(rows));
   }
 }
