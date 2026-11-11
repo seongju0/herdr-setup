@@ -11,7 +11,7 @@ const ok = stdout => ({ code: 0, stdout, stderr: '' });
 async function nativeHost(fixture = {}) {
   const modules = new Map(), shared = new Map(), storage = new Map(), queue = [], failures = [], timers = [];
   const state = {
-    now: 1000000, width: 312, calls: [], overlays: [], orders: [], notifications: 0, stopped: 0,
+    now: 1000000, windowActive: true, width: 312, calls: [], overlays: [], orders: [], notifications: 0, stopped: 0,
     agents: [], terminals: [], panes: [], focus: {}, knownAgents: [], configText: null,
     spaces: [{ id: 's', name: 'Synthetic workspace', folder: '/repo', active: true, tabs: [{ id: 'tab', name: '1', named: false }] }],
     machines: [], inventory: [], ...fixture,
@@ -59,7 +59,7 @@ async function nativeHost(fixture = {}) {
     spaces: () => state.spaces, agents: () => state.agents, panes: () => state.panes, terminals: () => state.terminals,
     machines: () => state.machines, focused: () => state.focus, props: () => state.props,
     theme: () => ({ selected: '#333333', hover: '#222222', border: '#444444', muted: '#888888', dim: '#777777', foreground: '#eeeeee', accent: '#aacc44', blocked: '#cc8800', working: '#4488cc', done: '#44aa77', idle: '#999999' }),
-    window: () => ({ platform: 'macos', active: true }), updates: () => ({ app: { ready: true } }),
+    window: () => ({ platform: 'macos', active: state.windowActive }), updates: () => ({ app: { ready: true } }),
     layout: () => ({ id: 'sidebar', size: { px: state.width } }),
     shared: key => shared.get(key), setShared: (key, value) => shared.set(key, value),
     setAgentOrder(order) { state.orders.push(Array.from(order)); },
@@ -320,17 +320,34 @@ test('U3 unified scroll, worktree/machine controls and rail retain native naviga
   const spaceRows = () => host.rowIds().filter(id => /^space-s\d+$/.test(id));
   const moves = host.state.calls.filter(c => c.command === 'space.move').length;
   host.focus('other');
-  assert.equal(spaceRows()[0], 'space-s2', 'User focus promotes the destination group');
-  assert.deepEqual(host.order(), canonical, 'MRU display must not change native next/previous traversal');
-  host.state.agents[0].status = 'working'; host.render();
-  assert.equal(spaceRows()[0], 'space-s2', 'Background activity does not promote its space');
-  host.state.agents[0].status = 'done'; host.render();
-  assert.equal(spaceRows()[0], 'space-s2', 'Background completion does not promote its space either');
+  assert.equal(spaceRows()[0], 'space-s0', 'Clicking a space never moves it beneath the pointer');
+  host.state.now += 29999; await host.tick(250);
   host.focus('tree');
-  assert.deepEqual(spaceRows().slice(0, 3), ['space-s0', 'space-s1', 'space-s2'], 'Worktree focus promotes the intact parent/worktree family');
-  assert.deepEqual(JSON.parse(host.storage.get('herdr-setup.spaces.recent')), ['s1', 's2', 's0']);
+  host.state.now += 1000; await host.tick(250);
+  assert.equal(host.storage.get('herdr-setup.spaces.recent'), undefined, 'Brief foreground peeks do not qualify');
+  host.focus('other');
+  host.state.now += 30000; await host.tick(250);
+  assert.deepEqual(JSON.parse(host.storage.get('herdr-setup.spaces.recent')), ['s2'], 'Continuous foreground dwell earns recency');
+  assert.equal(spaceRows()[0], 'space-s0', 'Qualification records pending recency without reordering');
+  assert.deepEqual(host.order(), canonical, 'Pending recency cannot change native next/previous traversal');
+  host.state.agents[0].status = 'working'; host.render();
+  host.state.agents[0].status = 'done'; host.render();
+  assert.deepEqual(JSON.parse(host.storage.get('herdr-setup.spaces.recent')), ['s2'], 'Background work/completion never earns recency');
+  host.state.windowActive = false; await host.tick(250);
+  host.focus('tree'); // Native selected context remains observable while the window is inactive.
+  host.state.now += 60000; await host.tick(250);
+  assert.deepEqual(JSON.parse(host.storage.get('herdr-setup.spaces.recent')), ['s2'], 'Time away does not count toward a space visit');
+  assert.equal(spaceRows()[0], 'space-s0', 'Leaving alone does not change the visible snapshot');
+  host.state.windowActive = true; await host.tick(250);
+  assert.deepEqual(spaceRows().slice(0, 3), ['space-s2', 'space-s0', 'space-s1'], 'Returning applies qualified pending order, not the just-focused space');
+  host.state.now += 30000; await host.tick(250);
+  assert.deepEqual(JSON.parse(host.storage.get('herdr-setup.spaces.recent')), ['s1', 's2']);
+  assert.equal(spaceRows()[0], 'space-s2', 'A qualified worktree visit also waits until return');
+  host.state.windowActive = false; host.render();
+  host.state.windowActive = true; host.render();
+  assert.deepEqual(spaceRows().slice(0, 3), ['space-s0', 'space-s1', 'space-s2'], 'Return promotes the intact qualified parent/worktree family');
   host.mount('body'); await host.tick(250);
-  assert.deepEqual(spaceRows().slice(0, 3), ['space-s0', 'space-s1', 'space-s2'], 'Local recency survives sidebar recreation');
+  assert.deepEqual(spaceRows().slice(0, 3), ['space-s0', 'space-s1', 'space-s2'], 'Qualified recency survives sidebar recreation');
   assert.equal(host.state.calls.filter(c => c.command === 'space.move').length, moves, 'MRU is presentation only, not native space writes');
   assert.deepEqual(host.order(), canonical);
   host.click('sidebar-toggle', 'brand');

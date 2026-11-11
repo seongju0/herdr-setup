@@ -7,7 +7,7 @@
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { icon, avatar, statusGlyph, unreadGlyph } from "./ui.js";
-import { spaces, machines, panes, run, openOverlay, exec, hc, theme, watchFolder, window } from "herdr";
+import { spaces, machines, panes, focused, run, openOverlay, exec, hc, theme, watchFolder, window } from "herdr";
 
 // Where a space is now: its first terminal's live folder, else where it was made.
 // `ps`: panes(), read once by the caller (each read copies every pane).
@@ -20,6 +20,7 @@ const base = (path) => path.replace(/\/+$/, "").split("/").pop();
 // Changes made outside Herdr (an editor's save, a commit in another app): looked
 // for this often, in repos the list shows, while the window is in front.
 const FALLBACK = 60000;
+const RECENT_DWELL = 30000;
 
 export default class SpacesSection {
   init(_props, cx) {
@@ -43,7 +44,9 @@ export default class SpacesSection {
     this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]"));
     this.foldedSpaces = new Set(JSON.parse(localStorage.getItem("spaces.folded") ?? "[]"));
     this.recentSpaces = JSON.parse(localStorage.getItem("herdr-setup.spaces.recent") ?? "[]");
-    this.lastFocusedSpace = null;
+    this.visibleRecentSpaces = [...this.recentSpaces];
+    this.recentVisit = null;
+    this.recentWindowActive = null;
     this.refreshMachines(cx);
     cx.timer.every(15000, cx => this.refreshMachines(cx));
     // `git status` walks the whole tree, on another machine a process there:
@@ -54,6 +57,7 @@ export default class SpacesSection {
   checkNew(cx) {
     const now = Date.now();
     const sp = spaces();
+    if (this.observeRecent(sp, focused()?.space, now, window()?.active === true)) cx.notify();
     for (const s of sp) if (!this.shown.has(s.id)) this.born[s.id] ??= now;
     const due = this.due(now, sp, panes());
     if (due.size) this.refreshGit(due, cx);
@@ -277,20 +281,34 @@ export default class SpacesSection {
     });
   }
 
-  // Display-only MRU: native worktree ordering and agent traversal stay unchanged.
-  recentOrder(rows, snapshotSpaces, focusedSpace) {
+  // A foreground visit earns recency; it never moves rows beneath a click.
+  observeRecent(snapshotSpaces, focusedSpace, now, active) {
     const live = new Set(snapshotSpaces.map(s => s.id));
+    const beforeVisible = JSON.stringify(this.visibleRecentSpaces);
     let recent = this.recentSpaces.filter(id => live.has(id));
-    const active = focusedSpace || snapshotSpaces.find(s => s.active)?.id;
-    if (active && live.has(active) && active !== this.lastFocusedSpace) {
-      recent = [active, ...recent.filter(id => id !== active)];
-      this.lastFocusedSpace = active;
+    const visit = this.recentVisit;
+    // Close the preceding foreground interval before switching space/window state.
+    if (visit && !visit.qualified && live.has(visit.space) && now - visit.since >= RECENT_DWELL) {
+      visit.qualified = true;
+      recent = [visit.space, ...recent.filter(id => id !== visit.space)];
     }
+    this.visibleRecentSpaces = this.visibleRecentSpaces.filter(id => live.has(id));
+    if (active && this.recentWindowActive === false) this.visibleRecentSpaces = [...recent];
+    const space = focusedSpace || snapshotSpaces.find(s => s.active)?.id;
+    if (!active || !live.has(space)) this.recentVisit = null;
+    else if (!visit || visit.space !== space) this.recentVisit = { space, since: now, qualified: false };
+    this.recentWindowActive = active;
     if (JSON.stringify(recent) !== JSON.stringify(this.recentSpaces)) {
       this.recentSpaces = recent;
       localStorage.setItem("herdr-setup.spaces.recent", JSON.stringify(recent));
     }
-    const ranks = new Map(recent.map((id, i) => [id, i]));
+    return beforeVisible !== JSON.stringify(this.visibleRecentSpaces);
+  }
+
+  // Display-only snapshot: native worktree ordering and traversal stay unchanged.
+  recentOrder(rows, snapshot) {
+    this.observeRecent(snapshot.spaces, snapshot.focused?.space, snapshot.now, snapshot.windowActive);
+    const ranks = new Map(this.visibleRecentSpaces.map((id, i) => [id, i]));
     const groups = [];
     for (const row of rows) {
       if (!row.tree || !groups.length) groups.push([]);
