@@ -7,7 +7,7 @@
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { icon, avatar, statusGlyph, unreadGlyph } from "./ui.js";
-import { spaces, machines, panes, focused, run, openOverlay, exec, hc, theme, watchFolder, window } from "herdr";
+import { spaces, machines, panes, run, openOverlay, exec, hc, theme, watchFolder, window } from "herdr";
 
 // Where a space is now: its first terminal's live folder, else where it was made.
 // `ps`: panes(), read once by the caller (each read copies every pane).
@@ -20,7 +20,6 @@ const base = (path) => path.replace(/\/+$/, "").split("/").pop();
 // Changes made outside Herdr (an editor's save, a commit in another app): looked
 // for this often, in repos the list shows, while the window is in front.
 const FALLBACK = 60000;
-const RECENT_DWELL = 30000;
 
 export default class SpacesSection {
   init(_props, cx) {
@@ -43,10 +42,7 @@ export default class SpacesSection {
     for (const state of Object.values(this.reconnecting)) state.busy = false;
     this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]"));
     this.foldedSpaces = new Set(JSON.parse(localStorage.getItem("spaces.folded") ?? "[]"));
-    this.recentSpaces = JSON.parse(localStorage.getItem("herdr-setup.spaces.recent") ?? "[]");
-    this.visibleRecentSpaces = [...this.recentSpaces];
-    this.recentVisit = null;
-    this.recentWindowActive = null;
+    this.pinnedSpaces = new Set(JSON.parse(localStorage.getItem("herdr-setup.spaces.pinned") ?? "[]"));
     this.refreshMachines(cx);
     cx.timer.every(15000, cx => this.refreshMachines(cx));
     // `git status` walks the whole tree, on another machine a process there:
@@ -57,7 +53,6 @@ export default class SpacesSection {
   checkNew(cx) {
     const now = Date.now();
     const sp = spaces();
-    if (this.observeRecent(sp, focused()?.space, now, window()?.active === true)) cx.notify();
     for (const s of sp) if (!this.shown.has(s.id)) this.born[s.id] ??= now;
     const due = this.due(now, sp, panes());
     if (due.size) this.refreshGit(due, cx);
@@ -281,40 +276,14 @@ export default class SpacesSection {
     });
   }
 
-  // A foreground visit earns recency; it never moves rows beneath a click.
-  observeRecent(snapshotSpaces, focusedSpace, now, active) {
-    const live = new Set(snapshotSpaces.map(s => s.id));
-    const beforeVisible = JSON.stringify(this.visibleRecentSpaces);
-    let recent = this.recentSpaces.filter(id => live.has(id));
-    const visit = this.recentVisit;
-    // Close the preceding foreground interval before switching space/window state.
-    if (visit && !visit.qualified && live.has(visit.space) && now - visit.since >= RECENT_DWELL) {
-      visit.qualified = true;
-      recent = [visit.space, ...recent.filter(id => id !== visit.space)];
-    }
-    this.visibleRecentSpaces = this.visibleRecentSpaces.filter(id => live.has(id));
-    if (active && this.recentWindowActive === false) this.visibleRecentSpaces = [...recent];
-    const space = focusedSpace || snapshotSpaces.find(s => s.active)?.id;
-    if (!active || !live.has(space)) this.recentVisit = null;
-    else if (!visit || visit.space !== space) this.recentVisit = { space, since: now, qualified: false };
-    this.recentWindowActive = active;
-    if (JSON.stringify(recent) !== JSON.stringify(this.recentSpaces)) {
-      this.recentSpaces = recent;
-      localStorage.setItem("herdr-setup.spaces.recent", JSON.stringify(recent));
-    }
-    return beforeVisible !== JSON.stringify(this.visibleRecentSpaces);
-  }
-
-  // Display-only snapshot: native worktree ordering and traversal stay unchanged.
-  recentOrder(rows, snapshot) {
-    this.observeRecent(snapshot.spaces, snapshot.focused?.space, snapshot.now, snapshot.windowActive);
-    const ranks = new Map(this.visibleRecentSpaces.map((id, i) => [id, i]));
+  // Explicit priority only: keep native order within the pinned/unpinned groups.
+  pinnedOrder(rows) {
     const groups = [];
     for (const row of rows) {
       if (!row.tree || !groups.length) groups.push([]);
       groups[groups.length - 1].push(row);
     }
-    const rank = group => Math.min(...group.map(r => ranks.get(r.w.id) ?? Infinity));
+    const rank = group => group.some(r => this.pinnedSpaces.has(r.w.id)) ? 0 : 1;
     return groups.sort((a, b) => {
       const am = a[0].w.machine || "", bm = b[0].w.machine || "";
       return am < bm ? -1 : am > bm ? 1 : rank(a) - rank(b);
@@ -406,6 +375,7 @@ export default class SpacesSection {
   row({ w, i, g, tree, metadata, hasMetadata, height }, t, statusBySpace, pendingSpaceIds, hasAgents) {
     const on = w.active;
     const folded = this.foldedSpaces.has(w.id);
+    const pinned = this.pinnedSpaces.has(w.id);
     const fromIndex = this.pressed === null ? -1 : spaces().findIndex(s => s.id === this.pressed);
     const status = statusBySpace.get(w.id) ?? w.status;
     const tip = this.spaceTip(w, status, g);
@@ -469,6 +439,20 @@ export default class SpacesSection {
         .child(v_flex().flex_1().min_w(0).justify_center()
           .child(div().min_w(0).truncate().text_size(12).font_semibold().text_color(t.foreground).child(w.name))
           .when(hasMetadata, el => el.child(this.gitTail(g, metadata, t))))
+        .child(div().id(`space-pin-${w.id}`).size(20).flex_none().flex().items_center().justify_center()
+          .rounded(4).cursor_pointer().text_color(pinned ? t.accent : t.dim)
+          .tooltip(`${pinned ? "Unpin" : "Pin"} space: ${w.name}`)
+          .accessibility_label(`${pinned ? "Unpin" : "Pin"} space: ${w.name}`)
+          .hover(el => el.bg(t.hover).text_color(t.foreground))
+          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+          .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
+          .on_click((_e, cx) => {
+            cx.stop_propagation();
+            pinned ? this.pinnedSpaces.delete(w.id) : this.pinnedSpaces.add(w.id);
+            localStorage.setItem("herdr-setup.spaces.pinned", JSON.stringify([...this.pinnedSpaces]));
+            cx.notify();
+          })
+          .child(icon(pinned ? "pin-off" : "pin", 12)))
         .when(pendingSpaceIds.has(w.id), el => el.child(unreadGlyph(t, `space-unread-${w.id}`)))
         .child(statusGlyph(t, status, 11)));
   }

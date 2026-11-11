@@ -9,7 +9,7 @@ const ok = stdout => ({ code: 0, stdout, stderr: '' });
 // Load the real routed package, following workspace-browser.test.mjs. Only
 // GPUI/native snapshots, storage, clock and external process/watch are replaced.
 async function nativeHost(fixture = {}) {
-  const modules = new Map(), shared = new Map(), storage = new Map(), queue = [], failures = [], timers = [];
+  const modules = new Map(), shared = new Map(), storage = new Map(fixture.storage ?? []), queue = [], failures = [], timers = [];
   const state = {
     now: 1000000, windowActive: true, width: 312, calls: [], overlays: [], orders: [], notifications: 0, stopped: 0,
     agents: [], terminals: [], panes: [], focus: {}, knownAgents: [], configText: null,
@@ -222,9 +222,9 @@ test('U1 unified space hierarchy retains identity, pins, child urgency and nativ
   host.focus('done');
   assert.equal(host.node('ag-done').styles.bg, '#333333');
   assert.equal(host.node('space-s').styles.bg, undefined, 'Space and agent must not share selected fill');
-  host.focus('remote/root');
+  host.focus('remote/root'); host.click('space-pin-remote/s');
   const focusedRows = host.rowIds();
-  assert.ok(focusedRows.indexOf('space-s') < focusedRows.indexOf('space-remote/s'), 'Recent remote focus cannot escape its machine group');
+  assert.ok(focusedRows.indexOf('space-s') < focusedRows.indexOf('space-remote/s'), 'Pinned remote spaces cannot escape their machine group');
   const shell = host.node('space-shell'); shell.on_mouse_down_left({}, {});
   shell.on_mouse_up_left({}, { notify() {} });
   assert.equal(host.state.calls.at(-1).command, 'space.select');
@@ -283,6 +283,7 @@ test('U2 focus acknowledges unread without masking live blocking or reordering n
 
 test('U3 unified scroll, worktree/machine controls and rail retain native navigation', async () => {
   const host = await nativeHost({
+    storage: [['herdr-setup.spaces.recent', '["s2"]']],
     spaces: Array.from({ length: 12 }, (_, i) => ({ id: 's' + i, name: 'Synthetic long workspace ' + i, folder: i === 1 ? '/worktree' : '/repo', status: 'idle', active: i === 0, tabs: [{ id: 'tab' + i, name: '1' }] })),
     machines: [{ name: 'loading', layout: 'loading' }, { name: 'ready', layout: 'ready' }],
     inventory: [{ name: 'loading', state: 'connected' }, { name: 'ready', state: 'connected' }, { name: 'offline', state: 'unreachable', why: 'Synthetic offline machine' }, { name: 'rebuilt', state: 'unreachable', why: 'a different core answers there ("new-core")' }],
@@ -319,42 +320,43 @@ test('U3 unified scroll, worktree/machine controls and rail retain native naviga
   const canonical = [...host.order()];
   const spaceRows = () => host.rowIds().filter(id => /^space-s\d+$/.test(id));
   const moves = host.state.calls.filter(c => c.command === 'space.move').length;
+  assert.equal(spaceRows()[0], 'space-s0', 'Legacy recency history must not influence stable order');
   host.focus('other');
-  assert.equal(spaceRows()[0], 'space-s0', 'Clicking a space never moves it beneath the pointer');
-  host.state.now += 29999; await host.tick(250);
-  host.focus('tree');
-  host.state.now += 1000; await host.tick(250);
-  assert.equal(host.storage.get('herdr-setup.spaces.recent'), undefined, 'Brief foreground peeks do not qualify');
-  host.focus('other');
-  host.state.now += 30000; await host.tick(250);
-  assert.deepEqual(JSON.parse(host.storage.get('herdr-setup.spaces.recent')), ['s2'], 'Continuous foreground dwell earns recency');
-  assert.equal(spaceRows()[0], 'space-s0', 'Qualification records pending recency without reordering');
-  assert.deepEqual(host.order(), canonical, 'Pending recency cannot change native next/previous traversal');
+  host.state.now += 60000; await host.tick(250);
   host.state.agents[0].status = 'working'; host.render();
   host.state.agents[0].status = 'done'; host.render();
-  assert.deepEqual(JSON.parse(host.storage.get('herdr-setup.spaces.recent')), ['s2'], 'Background work/completion never earns recency');
   host.state.windowActive = false; await host.tick(250);
-  host.focus('tree'); // Native selected context remains observable while the window is inactive.
-  host.state.now += 60000; await host.tick(250);
-  assert.deepEqual(JSON.parse(host.storage.get('herdr-setup.spaces.recent')), ['s2'], 'Time away does not count toward a space visit');
-  assert.equal(spaceRows()[0], 'space-s0', 'Leaving alone does not change the visible snapshot');
   host.state.windowActive = true; await host.tick(250);
-  assert.deepEqual(spaceRows().slice(0, 3), ['space-s2', 'space-s0', 'space-s1'], 'Returning applies qualified pending order, not the just-focused space');
-  host.state.now += 30000; await host.tick(250);
-  assert.deepEqual(JSON.parse(host.storage.get('herdr-setup.spaces.recent')), ['s1', 's2']);
-  assert.equal(spaceRows()[0], 'space-s2', 'A qualified worktree visit also waits until return');
-  host.state.windowActive = false; host.render();
-  host.state.windowActive = true; host.render();
-  assert.deepEqual(spaceRows().slice(0, 3), ['space-s0', 'space-s1', 'space-s2'], 'Return promotes the intact qualified parent/worktree family');
+  assert.equal(spaceRows()[0], 'space-s0', 'Focus, elapsed time, status and window return do not reorder spaces');
+  assert.equal(host.storage.get('herdr-setup.spaces.recent'), '["s2"]', 'Unused old history is left untouched');
+  host.click('space-fold-s2');
+  const beforePinCalls = host.state.calls.length, stoppedBeforePin = host.state.stopped;
+  const control = host.node('space-pin-s2');
+  control.on_mouse_down_left({}, { stop_propagation() { host.state.stopped++; } });
+  control.on_mouse_up_left({}, { stop_propagation() { host.state.stopped++; } });
+  host.click('space-pin-s2');
+  assert.equal(host.state.stopped, stoppedBeforePin + 3);
+  assert.equal(host.state.calls.length, beforePinCalls, 'Space pin must not select, focus, drag or pin an agent');
+  assert.equal(host.state.focus.space, 's2');
+  assert.equal(host.node('ag-other'), undefined, 'Pinning preserves the space fold');
+  assert.ok(host.node('space-unread-s0'), 'Pinning leaves unread markers alone');
+  assert.deepEqual(spaceRows().slice(0, 3), ['space-s2', 'space-s0', 'space-s1'], 'Explicit pin promotes the chosen space');
+  assert.deepEqual(JSON.parse(host.storage.get('herdr-setup.spaces.pinned')), ['s2']);
+  host.click('space-pin-s1');
+  assert.deepEqual(spaceRows().slice(0, 3), ['space-s0', 'space-s1', 'space-s2'], 'Pinned worktree families remain intact and use native relative order');
+  host.click('space-pin-s1'); host.click('space-pin-s2');
+  assert.deepEqual(spaceRows().slice(0, 3), ['space-s0', 'space-s1', 'space-s2'], 'Unpinning restores native order');
+  host.click('space-pin-s2');
   host.mount('body'); await host.tick(250);
-  assert.deepEqual(spaceRows().slice(0, 3), ['space-s0', 'space-s1', 'space-s2'], 'Qualified recency survives sidebar recreation');
-  assert.equal(host.state.calls.filter(c => c.command === 'space.move').length, moves, 'MRU is presentation only, not native space writes');
+  assert.deepEqual(spaceRows().slice(0, 3), ['space-s2', 'space-s0', 'space-s1'], 'Explicit pins survive sidebar recreation');
+  assert.equal(host.state.calls.filter(c => c.command === 'space.move').length, moves, 'Pins are display priority, not native reorder writes');
   assert.deepEqual(host.order(), canonical);
   host.click('sidebar-toggle', 'brand');
   assert.equal(host.state.calls.at(-1).args.px, 76);
   host.measure(76, 300); assert.deepEqual(host.order(), canonical);
   assert.ok(host.node('sidebar-expand'));
   assert.equal(host.node('spaces-rail-scroll').styles.overflow_y_scrollbar, true);
+  assert.equal(host.node('spaces-rail-scroll').children[0].id, 'space-s2', 'Rail keeps explicit space-pin priority');
   assert.deepEqual(host.node('spaces-rail-scroll').children.map(n => n.id).sort(), host.state.spaces.map(s => 'space-' + s.id).sort());
   assert.ok(host.node('space-unread-s0'), 'Rail retains unread independently from live aggregate status');
   host.click('space-s1'); assert.equal(host.state.calls.at(-1).args.id, 's1'); assert.equal(host.state.width, 76);

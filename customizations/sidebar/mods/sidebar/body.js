@@ -1,6 +1,6 @@
 // One snapshot/model and one scrolling hierarchy; native behavior stays with its owners.
 import { v_flex, h_flex } from "gpui-base";
-import { agents, terminals, panes, spaces, focused, window, setAgentOrder, theme, openOverlay } from "herdr";
+import { agents, terminals, panes, spaces, focused, setAgentOrder, theme, openOverlay } from "herdr";
 import AgentsSection from "./agents.js";
 import SpacesSection from "./spaces.js";
 import { button, isRail, sidebarWidth, toggleSidebar } from "./ui.js";
@@ -16,7 +16,7 @@ export default class SidebarBody {
 
   render(cx) {
     const t = theme();
-    const snapshot = { agents: agents(), terminals: terminals(), panes: panes(), spaces: spaces(), focused: focused(), now: Date.now(), windowActive: window()?.active === true };
+    const snapshot = { agents: agents(), terminals: terminals(), panes: panes(), spaces: spaces(), focused: focused(), now: Date.now() };
     const ordered = this.spaces.ordered(snapshot.spaces, snapshot.panes);
     const present = new Set(ordered.map(r => r.w.id));
     const spaceIds = [...present, ...snapshot.spaces.filter(s => !present.has(s.id)).map(s => s.id)];
@@ -32,7 +32,7 @@ export default class SidebarBody {
       })
       .when(!collapsed, el => el.child(this.agents.header(t, model)))
       .child(this.spaces.render(cx, {
-        collapsed, ordered: this.spaces.recentOrder(ordered, snapshot), snapshotSpaces: snapshot.spaces,
+        collapsed, ordered: this.spaces.pinnedOrder(ordered), snapshotSpaces: snapshot.spaces,
         statusBySpace: model.statusBySpace, pendingSpaceIds: model.pendingSpaceIds,
         below: id => this.agents.rows(t, id, model), openCreate,
       }))
