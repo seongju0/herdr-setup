@@ -29,7 +29,8 @@ function diffRows(lines) {
 }
 
 export default class Changes {
-  init(_props, cx) {
+  init(props, cx) {
+    this.embedded = props.embedded === true;
     this.files = []; this.rows = []; this.diffWidth = 0; this.message = ""; this.handle = cx.focus_handle();
     this.input = InputState.new({ placeholder: "Commit message" });
     this.input.on("change", (_e, cx) => {
@@ -194,8 +195,7 @@ export default class Changes {
         if (e.key === "escape" && this.typing) { this.typing = false; this.handle.focus(); cx.stop_propagation(); cx.notify(); }
       })
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
-        .child(div().font_semibold().child("Changes"))
-        .child(folderControl())
+        .when(!this.embedded, el => el.child(div().font_semibold().child("Changes")).child(folderControl()))
         .child(div().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted).child(`${this.files.length} files`))
         .child(div().flex_1()).child(div().text_size(11).text_color(t.ansi2).child(`+${add}`)).child(div().text_size(11).text_color(t.ansi1).child(`−${del}`)))
       .child(div().id("changes-root").px(14).py(4).text_size(11).text_color(t.dim).child(this.root ? `${this.root}${this.on ? ` · ${this.on}` : ""} · All repository changes` : this.error ?? "No repository"))

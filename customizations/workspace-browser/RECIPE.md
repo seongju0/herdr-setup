@@ -4,9 +4,9 @@ A native Herdr folder control shared by Files and Changes. Follow the current Pi
 
 ## Appearance
 
-- Folder controls live only in the Files and Changes headers. Keep the existing tab buttons without adding a global Session control or consuming tab-bar width.
-- Both headers identify mode and chosen path and open the same native directory finder. Changes also identifies the resolved Git repository/worktree root and “All repository changes.”
-- Use Herdr theme colors and existing panel sizing, borders, scrolling, previews and diff treatment. Keep the Files/Changes buttons and layout block IDs.
+- Expose one Files tab-bar entry with All files / Changes controls inside the Files panel. Default to All files, retaining each mode's preview/diff state across toggles. Keep the shared folder control inside that panel; no global Session control.
+- Under the folder control show the selected directory's current branch when Git provides one, or Detached HEAD with a short commit ID. Read on the selected machine, clear stale labels on selection changes, omit unavailable/non-Git labels and refresh with the existing cadence.
+- Changes still identifies the resolved Git repository/worktree root and “All repository changes.” Use Herdr theme colors and existing panel sizing, scrolling, previews and diff treatment.
 - The native dialog has a focused fuzzy-search field, flat directory results, explicit local path completion and Follow session. Support Up/Down, Enter and Esc; do not launch an OS Browse dialog. Do not render an empty status viewport; give each result a non-shrinking 32px row and size the scroll region to its rows, capped at 320px.
 
 ## Folder behavior
@@ -23,10 +23,19 @@ A native Herdr folder control shared by Files and Changes. Follow the current Pi
 - Automatic discovery is local macOS only. Remote dialogs retain known directories and absolute remote paths with their machine identity; never run a local-home scan for a remote target.
 - Files uses the exact selected directory. Changes resolves its containing Git root without changing that shared selection. A non-Git folder remains browsable. Unreadable/offline pins keep their own error rather than switching targets.
 
+## Filename/path finder
+
+- All files has an inline native Search files input. Empty query shows the original tree; nonempty query shows fuzzy-ranked recursive files with relative paths. Up/Down selects, Enter/click opens the existing preview, back returns to results and Escape clears to the tree. Keep keyboard handling scoped to search focus so preview/editor navigation is not intercepted.
+- Capture the exact selected cwd/on and context key; do not use the Git root or directory picker's searchRoots. Scope changes reset the transient query/snapshot and reject late results. Close/clear also prevents old scan publication.
+- Use one lazy bounded fd file snapshot per search episode, then rank in memory. Clear/reenter refreshes it; no per-keystroke processes, persistent index, content search, new poller or global Cmd+P shortcut.
+- Use NUL-delimited relative regular-file paths, respect ignore rules, include otherwise-hidden files, exclude .git/node_modules and do not follow symlinks (symlinked entries remain accessible in the tree). Reject absolute/traversing/malformed returned paths, preserve spaces/newlines, cap snapshots at 20,000 and display 50 matches with honest loading/no-match/error/partial notices. Bound long diagnostics to an 80px scroll region so results retain usable space. Ignore same-value Input change events so programmatic query clearing cannot discard a restored preview.
+- Execute with selected cwd/on. Local missing fd may use the existing local helper fallback; remote search must never use local home/tooling as a fallback.
+- Extend retained native flow scenarios for nested fuzzy/path matching, duplicate filenames, keyboard preview/Escape/tree, scan reuse, moved/pinned/stale/closed scopes, partial/failure and remote routing. Native exec/input boundaries may be substituted, not the internal finder or preview.
+
 ## Native implementation
 
 - Package one `mods/workspace-browser/` directory. Host imports cannot cross a mod directory, so keep shared context and helpers inside it.
-- `main.js` is the sole native View. Read layout/overlay configuration through `herdr.props()` (the root init argument is not that configuration), then select a plain implementation object using its `view` (`files`, `changes`, `observer`, `picker`), forward init/render/optional close with the root's current context, and return the implementation's element. Default to files; reject unknown views. Do not cache a Context or depend on retained-child invalidation behavior.
+- `main.js` is the sole native View. Read layout/overlay configuration through `herdr.props()` (the root init argument is not that configuration), then select a plain implementation object using its `view` (`files` for the combined browser, `tabs` for the adapted tab bar, legacy standalone `changes`, `observer`, `picker`), forward init/render/optional close with the root's current context, and return the implementation's element. Default to files; reject unknown views. Do not cache a Context or depend on retained-child invalidation behavior.
 - `context.js` owns the policy and IO key (space/tab/machine/directory). `folder-observer.js`, `folder-picker.js` and `folder-controls.js` consume it. `directory-search.js` owns configuration, root scope and fd discovery; picker state owns filtering, status and cached explicit-path parent listings through `directories.js`. `files.js` and `changes.js` adapt the shipped views; `directories.js` retains the existing bounded Unix/Windows folder operation. Copy required icons into the customization.
 - Retain context checks on async directory/file/Git reads, old-result rejection, local watchers, remote polling and existing refresh interval. Never display or commit an old repository as if it belonged to a new selection.
 - Preserve Changes' commit guard and captured root/machine for both `git add -A` and `git commit`. An in-flight commit finishes against that captured repository; do not redirect, add locks or retry writes automatically.
@@ -34,7 +43,7 @@ A native Herdr folder control shared by Files and Changes. Follow the current Pi
 
 ## Packaging
 
-Generate `herdr-setup-workspace-browser.json` from installed `main` or an explicitly named Linear base. Replace only the expected Files/Changes content; preserve their IDs, existing buttons, sizing, panel state and Linear. Append `workspace-folder-observer` with props `{ "view": "observer" }` to the root's `floating` entries, preserving existing entries. The observer renders an empty zero-size element, not another visible button. Reject ID conflicts/custom content that needs a manual merge.
+Generate `herdr-setup-workspace-browser.json` from installed `main` or an explicitly named supported base. Require shipped tabs/Files/Changes content. Replace tabs with the adapted tab bar, Files with the combined browser, remove the Changes stack child and map an active Changes selection to Files. Preserve other buttons/panels (including Linear/GitHub), sizing and visibility. The adapted tab bar maps the enabled Changes entry to Files while retaining all other enabled IDs (including Linear/GitHub) for per-space restoration. Expose Files if either original panel is enabled. Its per-copy localStorage starts fresh rather than migrating the shipped tab bar's remembered per-space choices; shared folder pins/recents are unchanged. Refuse custom tab-bar content; never edit the shipped tabs mod. Append `workspace-folder-observer` with props `{ "view": "observer" }` to the root's `floating` entries, preserving existing entries. The observer renders an empty zero-size element, not another visible button. Reject ID conflicts/custom content that needs a manual merge.
 
 Keep the existing installer's read-only preview, conflict/symlink checks, exclusive copies, partial-write reporting and separate activation. Workspace installation leaves Linear config and Pi setup alone. Preserve upstream modification notices and both licenses (`LICENSE`, `LICENSE-HERDR`) plus `NOTICE` with the installed mod.
 

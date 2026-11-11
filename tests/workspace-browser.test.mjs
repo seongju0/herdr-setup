@@ -12,8 +12,10 @@ const ok = stdout => ({ code: 0, stdout, stderr: '' });
 async function nativeHost() {
   let rendering = false;
   const queue = [], failures = [], shared = new Map(), modules = new Map();
+  const storage = new Map();
   const state = {
-    shown: true, calls: [], overlays: [], hook: null, config: null, discoveries: new Map(),
+    branch: 'feature/synthetic', shown: true, calls: [], overlays: [], hook: null, config: null, discoveries: new Map(),
+    layout: { id: 'root', children: [{ id: 'panel', hidden: true, children: [{ id: 'panel-body', active: 'files' }] }] },
     spaces: [{ id: 's', active: true, machine: null, folder: '/space', tabs: [{ id: 'a', active: true }, { id: 'b' }] }],
     panes: [{ pane: 'pi-pane', tab: 'a', terminal: 't1', cwd: '/shell-old' }, { pane: 'shell-pane', tab: 'a', terminal: 't2', cwd: '/shell' }],
     terminals: [{ address: 't1', state: 'live', report: { app: 'pi' }, labels: { 'pi.session-id': 'session-1', 'pi.session-cwd': '/repo/pkg' } },
@@ -32,6 +34,7 @@ async function nativeHost() {
         else if (method === 'on_click') node.click = args[0];
         else if (method === 'on_key_down') node.keydown = args[0];
         else if (method === 'h') node.height = args[0];
+        else if (method === 'max_h') node.maxHeight = args[0];
         else if (method === 'flex_shrink_0') node.shrink = false;
         else if (method === 'overflow_y_scrollbar') node.scrollbar = true;
         else if (method === 'when' && args[0]) args[1](proxy);
@@ -44,7 +47,7 @@ async function nativeHost() {
     notify() { assert.equal(rendering, false, 'notify during render'); },
     spawn(task) { queue.push(task); },
     timer: { every() {} },
-    focus_handle() { assert.equal(rendering, false); return { focus() {} }; },
+    focus_handle() { assert.equal(rendering, false); return { focus() {}, release() {} }; },
     stop_propagation() {},
   };
   const external = {
@@ -53,10 +56,21 @@ async function nativeHost() {
       assert.equal(rendering, false, 'InputState must belong to init');
       const events = new Map(); let value = '';
       const input = { on: (name, fn) => events.set(name, fn), value: () => value,
-        set_value(next) { assert.equal(rendering, false); value = next; },
+        set_value(next) { assert.equal(rendering, false); value = next;
+          if (state.programmaticChanges) queue.push(async cx => events.get('change')?.({}, cx));
+        },
         focus() {}, release() { input.released = true; }, emit(name, next) { if (next !== undefined) value = next; events.get(name)?.({}, cx); } };
       return input;
     } },
+    ScrollHandle: { new: () => ({ scroll_to_item() {}, release() {} }) },
+    localStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) },
+    layout: () => state.layout,
+    run(command, args) { state.calls.push({ command, ...args });
+      const panel = state.layout.children[0], body = panel.children[0];
+      if (command === 'layout.show') panel.hidden = false;
+      if (command === 'layout.hide') panel.hidden = true;
+      if (command === 'layout.select') body.active = args.child;
+    },
     Input: { new: element }, Editor: { new: element },
     EditorState: { new: options => ({ ...options, release() {} }) },
     Scrollbar: { vertical: element }, v_virtual_list: element,
@@ -67,7 +81,7 @@ async function nativeHost() {
     openOverlay(options) { state.overlays.push(options); return 'overlay'; },
     closeOverlay() { picker?.close(cx); picker = null; },
     watchFolder: () => new Promise(() => {}),
-    readTextFile: async (path, options) => { state.calls.push({ read: path, ...options }); return path === '/app/config/workspace-browser.json' ? state.config : 'sample text\n'; },
+    readTextFile: async (path, options) => { state.calls.push({ read: path, ...options }); return state.readHook?.(path, options) ?? (path === '/app/config/workspace-browser.json' ? state.config : 'sample text\n'); },
     exec: async (cmd, args, options = {}) => {
       const call = { cmd, args: Array.from(args), ...options }; state.calls.push(call);
       const intercepted = state.hook?.(call);
@@ -79,6 +93,8 @@ async function nativeHost() {
         if (options.cwd === '/plain') return { code: 128, stdout: '', stderr: 'not git' };
         return ok(options.cwd.replace(/\/(pkg|sub)$/, '') + '\n');
       }
+      if (args.includes('symbolic-ref')) return state.branch === null || options.cwd === '/plain' ? { code: 1, stdout: '', stderr: '' } : ok(state.branch + '\n');
+      if (args.includes('--short')) return options.cwd === '/plain' ? { code: 128, stdout: '', stderr: 'not git' } : ok('a1b2c3d\n');
       if (args.includes('status')) return ok(' M sample.txt\0');
       if (args.includes('--numstat')) return ok('2\t1\tsample.txt\0');
       if (args.includes('diff')) return ok('@@ -1 +1 @@\n-old\n+new\n');
@@ -105,13 +121,14 @@ async function nativeHost() {
   const { default: Main } = await load('main.js');
   // Herdr exposes layout/overlay props through props(), not the root init argument.
   const mount = copyProps => { state.copyProps = copyProps; const view = new Main(); view.init(undefined, cx); return view; };
-  const observer = mount({ view: 'observer' }), files = mount({ view: 'files' }), changes = mount({ view: 'changes' });
+  const observer = mount({ view: 'observer' }), files = mount({ view: 'files' }), changes = mount({ view: 'changes' }), tabs = mount({ view: 'tabs' });
   let picker = null, trees = {};
   const find = (node, id) => node?.id === id ? node : node?.children?.map(child => find(child, id)).find(Boolean);
   const render = () => {
     rendering = true;
     try {
       trees.observer = observer.render(cx).node;
+      trees.tabs = tabs.render(cx).node;
       if (state.shown) { trees.files = files.render(cx).node; trees.changes = changes.render(cx).node; }
       if (picker) trees.picker = picker.render(cx).node;
     } finally { rendering = false; }
@@ -129,12 +146,17 @@ async function nativeHost() {
   const open = (panel = 'files') => { click(panel, 'workspace-folder'); picker = mount({ ...state.overlays.at(-1).props, overlay: 'overlay' }); render(); return picker.implementation; };
   const text = node => typeof node === 'string' ? node : (node?.children ?? []).map(text).join(' ');
   return { state, render, settle, click, open,
-    get files() { return files.implementation; }, get changes() { return changes.implementation; }, get picker() { return picker?.implementation; },
+    enablePanels(value) { shared.set('workspace.panels', value); render(); },
+    get browser() { return files.implementation; }, get files() { return files.implementation.files; }, get changes() { return changes.implementation; }, get picker() { return picker?.implementation; },
     async runNextTask() { assert.ok(queue.length); await queue.shift()(cx); render(); },
     text: view => text(trees[view]), node: (view, id) => find(trees[view], id),
     key(key) { trees.picker.keydown({ key }, cx); render(); },
     type(value) { picker.implementation.input.emit('change', value); render(); },
     submit() { picker.implementation.input.emit('submit'); render(); },
+    fileType(value) { files.implementation.files.input.emit('change', value); render(); },
+    fileKey(key) { find(trees.files, 'files-search').keydown({ key }, cx); render(); },
+    fileSubmit() { files.implementation.files.input.emit('submit'); render(); },
+    closeFiles() { files.close(cx); },
     async pin(path) { open(); this.type(path); this.submit(); await settle(); },
     saved(tab = 'a', space = 's') { return shared.get('herdr-setup.workspace-browser.v1')?.[JSON.stringify([space, tab])]; },
   };
@@ -143,11 +165,48 @@ async function nativeHost() {
 test('native directory picker and Files/Changes follow live Pi sessions, pin/unpin and persist per tab even with hidden panels', async () => {
   const host = await nativeHost(); host.render(); await host.settle();
   assert.equal(host.files.root, '/repo/pkg'); assert.equal(host.changes.root, '/repo');
+  assert.equal(host.browser.mode, 'files');
+  assert.ok(host.node('tabs', 'panel-files'));
+  assert.equal(host.node('tabs', 'panel-changes'), undefined);
+  assert.equal(host.state.layout.children[0].hidden, true, 'Fresh tab-bar storage preserves the initial closed panel');
+  host.click('tabs', 'panel-files'); assert.equal(host.state.layout.children[0].hidden, false);
+  host.click('tabs', 'panel-files'); assert.equal(host.state.layout.children[0].hidden, true);
+  host.enablePanels(['files', 'changes', 'linear-panel', 'github-panel']);
+  host.state.spaces.push({ id: 'other', active: false, machine: null, folder: '/other', tabs: [{ id: 'other-tab', active: true }] });
+  const initialFocus = host.state.focus, panel = host.state.layout.children[0], body = panel.children[0];
+  for (const child of ['linear-panel', 'github-panel']) {
+    panel.hidden = false; body.active = child; host.render(); await host.settle();
+    host.state.spaces[0].active = false; host.state.spaces[1].active = true;
+    host.state.focus = { space: 'other', tab: 'other-tab', pane: null, terminal: null };
+    host.render(); await host.settle();
+    assert.equal(panel.hidden, true);
+    const beforeReturn = host.state.calls.length;
+    host.state.spaces[0].active = true; host.state.spaces[1].active = false;
+    host.state.focus = initialFocus; host.render(); await host.settle();
+    assert.equal(panel.hidden, false, `${child} is restored when returning to its space`);
+    assert.equal(body.active, child);
+    assert.ok(host.state.calls.slice(beforeReturn).some(c => c.command === 'layout.select' && c.child === child));
+  }
+  host.state.spaces.pop();
+  panel.hidden = true; body.active = 'files'; host.render(); await host.settle();
+  host.enablePanels(['changes']); assert.ok(host.node('tabs', 'panel-files'), 'Changes-only preference still opens Files');
+  host.enablePanels([]); assert.equal(host.node('tabs', 'panel-files'), undefined);
+  host.enablePanels(['files', 'changes']);
+  assert.match(host.text('files'), /All files Changes/);
+  assert.match(host.text('files'), /feature\/synthetic/);
+  assert.ok(host.node('files', 'files-tree'));
+  host.click('files', 'files-mode-changes'); await host.settle();
+  assert.ok(host.node('files', 'changes-list'));
+  assert.equal(host.node('files', 'files-tree'), undefined);
+  assert.equal(host.browser.changes.root, '/repo');
+  host.click('files', 'files-mode-files'); await host.settle();
   assert.equal(host.text('observer'), '', 'The always-mounted observer paints no chrome');
   assert.match(host.text('files'), /Session · \/repo\/pkg/);
   assert.match(host.text('changes'), /\/repo · All repository changes/);
   host.click('files', 'file-sample.txt'); await host.settle();
   assert.equal(host.files.code.value, 'sample text\n');
+  host.click('files', 'files-mode-changes'); host.click('files', 'files-mode-files');
+  assert.equal(host.files.file, 'sample.txt', 'Mode toggling preserves the selected preview');
   assert.ok(host.state.calls.some(c => c.read === '/repo/pkg/sample.txt' && c.on === null));
   assert.equal(host.changes.rows.at(-1).text, 'new');
 
@@ -155,7 +214,10 @@ test('native directory picker and Files/Changes follow live Pi sessions, pin/unp
   host.render(); await host.settle(); assert.equal(host.files.root, '/repo/pkg', 'Shell focus cannot steal a Pi directory');
   // Session replacement models the publisher updating both labels on /move.
   Object.assign(host.state.terminals[0].labels, { 'pi.session-id': 'session-2', 'pi.session-cwd': '/next/sub' });
-  host.render(); await host.settle(); assert.equal(host.files.root, '/next/sub'); assert.equal(host.changes.root, '/next');
+  host.state.branch = 'feature/next';
+  host.render(); assert.equal(host.node('files', 'files-branch'), undefined, 'Never show a previous directory branch while switching');
+  await host.settle(); assert.equal(host.files.root, '/next/sub'); assert.equal(host.changes.root, '/next');
+  assert.match(host.text('files'), /feature\/next/);
   host.state.config = JSON.stringify({ searchRoots: ['/next', '~/Projects', '/next/'] });
   host.state.discoveries.set('/next', '/next/unknown deep/sub/\0/next/another/\0');
   host.state.discoveries.set('/home/synthetic/Projects', '/home/synthetic/Projects/hidden worktree/\0');
@@ -265,16 +327,21 @@ test('selection validation, non-Git folders, stale IO/commit guards and remote r
   host.type('relative'); host.submit(); await host.settle(); assert.equal(host.files.root, '/repo/pkg');
   host.type('/bad\0path'); host.submit(); await host.settle(); assert.equal(host.files.root, '/repo/pkg');
   assert.equal(host.state.calls.some(c => c.cmd === 'sh' && c.args.at(-1).includes('\0')), false);
+  host.state.branch = null;
+  await host.pin('/detached'); assert.match(host.text('files'), /Detached HEAD · a1b2c3d/);
   await host.pin('/plain'); assert.equal(host.files.root, '/plain'); assert.equal(host.changes.root, null);
+  assert.equal(host.node('files', 'files-branch'), undefined, 'Non-Git directories have no invented branch');
+  host.state.branch = 'feature/synthetic';
   assert.match(host.text('changes'), /Not a git repository/);
   const writes = () => host.state.calls.filter(c => c.cmd === 'git' && ['add', 'commit'].includes(c.args[0]));
   host.changes.input.emit('change', 'cannot commit'); host.click('changes', 'commit'); await host.settle(); assert.equal(writes().length, 0);
 
-  const oldTop = deferred();
-  host.state.hook = c => c.args.includes('--show-toplevel') && c.cwd === '/slow' ? oldTop.promise : null;
+  const oldTop = deferred(), oldBranch = deferred();
+  host.state.hook = c => c.cwd !== '/slow' ? null : c.args.includes('--show-toplevel') ? oldTop.promise : c.args.includes('symbolic-ref') ? oldBranch.promise : null;
   await host.pin('/slow');
   await host.pin('/fresh/sub'); assert.equal(host.changes.root, '/fresh');
-  oldTop.resolve(ok('/slow-root\n')); await host.settle(); assert.equal(host.changes.root, '/fresh');
+  oldTop.resolve(ok('/slow-root\n')); oldBranch.resolve(ok('wrong-old-branch\n')); await host.settle(); assert.equal(host.changes.root, '/fresh');
+  assert.doesNotMatch(host.text('files'), /wrong-old-branch/);
   assert.equal(host.files.root, '/fresh/sub');
   // Publish the actual picker choice, then click before the scheduled panel
   // refresh can clear the old repository/message.
@@ -285,11 +352,14 @@ test('selection validation, non-Git folders, stale IO/commit guards and remote r
 
   const add = deferred();
   host.state.hook = c => c.args[0] === 'add' ? add.promise : null;
-  host.changes.input.emit('change', 'captured commit'); host.click('changes', 'commit'); await host.settle();
+  host.click('files', 'files-mode-changes');
+  host.browser.changes.input.emit('change', 'captured commit'); host.click('files', 'commit'); await host.settle();
   assert.equal(writes().at(-1).cwd, '/changed');
   await host.pin('/different/sub'); add.resolve(ok('')); await host.settle();
   assert.deepEqual(writes().map(c => [c.args[0], c.cwd, c.on]), [['add', '/changed', null], ['commit', '/changed', null]]);
   assert.equal(host.changes.root, '/different');
+  assert.equal(host.browser.changes.root, '/different');
+  host.click('files', 'files-mode-files');
 
   // Publication belongs to the dialog's captured tab, not the tab focused after
   // validation; a removed tab or a dismissed dialog cannot receive a pin.
@@ -395,6 +465,7 @@ test('selection validation, non-Git folders, stale IO/commit guards and remote r
   host.render(); await host.settle();
   assert.equal(host.files.root, '/srv/project/sub'); assert.equal(host.files.on, 'remote');
   assert.equal(host.changes.root, '/srv/project'); assert.equal(host.changes.on, 'remote');
+  assert.ok(host.state.calls.some(c => c.args?.includes('symbolic-ref') && c.cwd === '/srv/project/sub' && c.on === 'remote'));
   assert.match(host.text('changes'), /\/srv\/project · remote · All repository changes/);
   const scansBeforeRemote = host.state.calls.filter(c => c.cmd === 'fd').length;
   host.open(); await host.settle();
@@ -416,4 +487,115 @@ test('selection validation, non-Git folders, stale IO/commit guards and remote r
   assert.deepEqual(writes().slice(-2).map(c => [c.args[0], c.cwd, c.on]), [['add', '/srv/pasted', 'remote'], ['commit', '/srv/pasted', 'remote']]);
   host.open(); host.key('escape'); await host.settle();
   assert.equal(host.saved('b')?.pin.cwd, '/space', 'Cancellation does not change the existing pin');
+});
+
+test('All files inline finder snapshots recursive filenames, ranks paths and opens the retained preview without reading while typing', async () => {
+  const host = await nativeHost(); host.render(); await host.settle();
+  const scans = () => host.state.calls.filter(c => c.cmd === 'fd');
+  const reads = () => host.state.calls.filter(c => c.read && c.read !== '/app/config/workspace-browser.json');
+  const paths = ['src/app/components/Header.tsx', 'src/other/Header.tsx', 'Header.tsx', 'appHeaderNotes.txt', '.hidden/ spaced\nname.txt'];
+  host.state.hook = c => c.cmd === 'fd' ? Promise.resolve(ok(paths.join('\0') + '\0/absolute\0../escape\0nested/../escape\0nested\\..\\escape\0C:/absolute\0unfinished')) : null;
+  assert.equal(scans().length, 0, 'Opening All files does not scan recursively');
+  assert.equal(host.node('files', 'file-src/app/components/Header.tsx'), undefined, 'The nested match is absent from the normal tree');
+  host.fileType('apphdr');
+  assert.match(host.text('files'), /Searching files/);
+  await host.settle();
+  assert.ok(Array.from(host.files.searchRows().paths).includes('src/app/components/Header.tsx'), 'Shorthand spans path components');
+  assert.equal(host.node('files', 'files-tree'), undefined);
+  assert.equal(reads().length, 0, 'Searching does not read file contents');
+  assert.deepEqual(scans()[0].args, ['--type', 'f', '--relative-path', '--show-errors', '--color', 'never', '--print0', '--hidden', '--exclude', '.git', '--exclude', 'node_modules', '--max-results', '20001', '']);
+  assert.equal(scans()[0].cwd, '/repo/pkg'); assert.equal(scans()[0].on, null);
+  host.fileType('Header.tsx');
+  assert.deepEqual(Array.from(host.files.searchRows().paths), ['Header.tsx', 'src/other/Header.tsx', 'src/app/components/Header.tsx']);
+  assert.match(host.text('files'), /src\/other\/Header.tsx/);
+  const cached = host.files.searchRows(); host.render(); assert.equal(host.files.searchRows(), cached, 'Unrelated renders reuse fuzzy results');
+  host.fileKey('down'); assert.equal(host.files.at, 1);
+  host.fileKey('up'); assert.equal(host.files.at, 0);
+  host.fileKey('down'); host.fileSubmit(); await host.settle();
+  assert.equal(host.files.file, 'src/other/Header.tsx'); assert.equal(host.files.code.value, 'sample text\n');
+  assert.deepEqual(reads().map(c => [c.read, c.on]), [['/repo/pkg/src/other/Header.tsx', null]]);
+  assert.ok(host.node('files', 'files-search'), 'Search remains reachable beside the preview');
+  // Model deferred programmatic changes too; same-value notifications must not clear restored previews.
+  host.state.programmaticChanges = true;
+  host.state.terminals[0].labels['pi.session-cwd'] = '/other-scope';
+  host.render(); await host.settle();
+  host.state.terminals[0].labels['pi.session-cwd'] = '/repo/pkg';
+  host.render(); await host.settle();
+  assert.equal(host.files.file, 'src/other/Header.tsx', 'Returning to a folder restores its preview despite deferred input notifications');
+  assert.equal(host.files.code.value, 'sample text\n');
+  host.fileType('Header.tsx'); await host.settle(); host.fileKey('down'); host.fileSubmit(); await host.settle();
+  assert.equal(host.node('files', 'files').keydown, undefined, 'Finder keys are scoped to the Input subtree, not the preview Editor');
+  host.click('files', 'files-back'); assert.ok(host.node('files', 'files-search-results'));
+  host.fileSubmit(); await host.settle(); host.fileType('spaced');
+  assert.equal(host.files.file, null, 'Typing from preview returns to results');
+  host.click('files', 'files-match-0'); await host.settle();
+  assert.equal(reads().at(-1).read, '/repo/pkg/.hidden/ spaced\nname.txt', 'Filename whitespace and NUL record boundaries are preserved');
+  host.fileKey('escape'); assert.ok(host.node('files', 'files-tree')); assert.equal(host.files.query, '');
+  assert.equal(scans().length, 2, 'Only returning to the folder and restarting search adds a snapshot; typing/selection reuse it');
+  host.fileType('escape'); await host.settle();
+  assert.equal(scans().length, 3, 'Clear then reenter refreshes discovery');
+  assert.equal(host.files.searchRows().paths.length, 0, 'Unsafe paths are never selectable');
+  assert.match(host.text('files'), /No matching files/);
+});
+
+test('inline finder rejects stale scans/previews, bounds partial results and routes selected machine failures honestly', async () => {
+  const host = await nativeHost(); host.render(); await host.settle();
+  const scans = () => host.state.calls.filter(c => c.cmd === 'fd' || c.cmd?.endsWith('/bin/fd'));
+  const slow = deferred();
+  host.state.hook = c => c.cmd === 'fd' ? slow.promise : null;
+  host.fileType('old'); await host.settle(); host.fileKey('escape');
+  host.state.hook = c => c.cmd === 'fd' ? Promise.resolve(ok('fresh.txt\0')) : null;
+  host.fileType('fresh'); await host.settle(); slow.resolve(ok('old.txt\0')); await host.settle();
+  assert.deepEqual(Array.from(host.files.searchRows().paths), ['fresh.txt'], 'Clearing invalidates the earlier episode');
+  const preview = deferred(); host.state.readHook = () => preview.promise;
+  host.fileSubmit(); await host.settle(); host.fileKey('escape');
+  preview.resolve('stale contents'); await host.settle(); assert.equal(host.files.code, null);
+  host.state.readHook = null;
+  const oldScope = deferred(); host.state.hook = c => c.cmd === 'fd' ? oldScope.promise : null;
+  host.fileType('old'); await host.settle();
+  Object.assign(host.state.terminals[0].labels, { 'pi.session-id': 'new', 'pi.session-cwd': '/selected/sub' });
+  host.render(); await host.settle(); oldScope.resolve(ok('old.txt\0')); await host.settle();
+  assert.equal(host.files.query, ''); assert.equal(host.files.scan, null); assert.equal(host.files.root, '/selected/sub');
+  const many = Array.from({ length: 20001 }, (_, i) => `nested/file-${i}.txt`).join('\0') + '\0';
+  host.state.hook = c => c.cmd === 'fd' ? Promise.resolve({ code: 1, stdout: many, stderr: Array.from({ length: 100 }, (_, i) => `permission denied in directory ${i}`).join('\n') }) : null;
+  host.fileType('file'); await host.settle();
+  assert.equal(scans().at(-1).cwd, '/selected/sub', 'Search uses the selection, not Git root or picker searchRoots');
+  assert.equal(host.files.searchRows().paths.length, 50); assert.equal(host.files.searchRows().count, 20000);
+  assert.match(host.text('files'), /20,000-file scan limit/); assert.match(host.text('files'), /permission denied/); assert.match(host.text('files'), /showing first 50/);
+  assert.equal(host.node('files', 'files-search-notice').maxHeight, 80, 'Many scan diagnostics cannot consume the results viewport');
+  assert.equal(host.node('files', 'files-search-notice').scrollbar, true);
+  host.fileType('file-20000'); assert.equal(host.files.searchRows().paths.length, 0, 'Sentinel is not selectable');
+  host.fileKey('escape');
+  host.state.hook = c => c.cmd === 'fd' ? Promise.reject(new Error('cannot start fd: program not found'))
+    : c.cmd === '/home/synthetic/.pi/agent/bin/fd' ? Promise.resolve(ok('fallback.txt\0')) : null;
+  host.fileType('fallback'); await host.settle(); assert.equal(host.files.searchRows().paths[0], 'fallback.txt');
+  assert.equal(scans().at(-1).cmd, '/home/synthetic/.pi/agent/bin/fd'); assert.equal(scans().at(-1).cwd, '/selected/sub');
+  host.fileKey('escape');
+  const beforeFailure = scans().length;
+  host.state.hook = c => c.cmd === 'fd' ? Promise.reject(new Error('cannot run fd: Permission denied (os error 13)')) : null;
+  host.fileType('x'); await host.settle(); assert.equal(scans().length, beforeFailure + 1); assert.match(host.text('files'), /Permission denied/);
+  host.fileKey('escape'); assert.ok(host.node('files', 'files-tree'), 'Missing/broken search cannot break tree navigation');
+
+  host.state.spaces.push({ id: 'remote/s', machine: 'remote', folder: '/srv/project', tabs: [{ id: 'remote/a', active: true }] });
+  host.state.focus = { space: 'remote/s', tab: 'remote/a', pane: null, terminal: null };
+  host.render(); await host.settle();
+  const beforeRemote = scans().length;
+  host.state.hook = c => c.cmd === 'fd' ? Promise.reject(new Error('cannot start fd: program not found')) : null;
+  host.fileType('file'); await host.settle();
+  assert.equal(scans().length, beforeRemote + 1, 'Remote absence never tries a local-home fallback');
+  assert.equal(scans().at(-1).cwd, '/srv/project'); assert.equal(scans().at(-1).on, 'remote');
+  assert.match(host.text('files'), /fd is not installed on the selected machine/);
+  host.fileKey('escape');
+  host.state.hook = c => c.cmd === 'fd' ? Promise.resolve(ok('remote/file.txt\0')) : null;
+  host.fileType('file'); await host.settle(); host.fileSubmit(); await host.settle();
+  assert.ok(host.state.calls.some(c => c.read === '/srv/project/remote/file.txt' && c.on === 'remote'));
+  const closedPreview = deferred(); host.state.readHook = () => closedPreview.promise;
+  host.fileSubmit(); await host.settle();
+  host.closeFiles(); closedPreview.resolve('closed contents'); await host.settle();
+  assert.equal(host.files.code, null); assert.equal(host.files.input.released, true);
+
+  const closing = await nativeHost(); closing.render(); await closing.settle();
+  const scan = deferred(); closing.state.hook = c => c.cmd === 'fd' ? scan.promise : null;
+  closing.fileType('file'); await closing.settle(); closing.closeFiles();
+  scan.resolve(ok('file.txt\0')); await closing.settle(); assert.equal(closing.files.scan, null, 'Closed views reject late discovery');
 });

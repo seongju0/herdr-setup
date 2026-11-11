@@ -1,6 +1,7 @@
 import { View, div } from "gpui-kit";
 import { props } from "herdr";
-import Files from "./files.js";
+import Browser from "./browser.js";
+import Tabs from "./tabs.js";
 import Changes from "./changes.js";
 import FolderObserver from "./folder-observer.js";
 import FolderPicker from "./folder-picker.js";
@@ -11,7 +12,7 @@ export default class WorkspaceBrowser extends View {
   init(_props, cx) {
     const configuration = props() ?? {};
     const Implementation = new Map([
-      ["files", Files], ["changes", Changes], ["observer", FolderObserver], ["picker", FolderPicker],
+      ["files", Browser], ["tabs", Tabs], ["changes", Changes], ["observer", FolderObserver], ["picker", FolderPicker],
     ]).get(configuration.view ?? "files");
     if (!Implementation) { this.error = `Unknown workspace-browser view: ${configuration.view}`; return; }
     this.implementation = new Implementation();

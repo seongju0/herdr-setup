@@ -1,12 +1,13 @@
 // Adapted from Herdr 0.1.13 Files (Apache-2.0; see LICENSE-HERDR and NOTICE).
 // Modified to browse the shared selected folder with root-owned lifecycle and controls.
 import { div, svg } from "gpui-kit";
-import { v_flex, h_flex, Editor, EditorState } from "gpui-base";
+import { v_flex, h_flex, Editor, EditorState, Input, InputState, ScrollHandle } from "gpui-base";
 import { exec, readTextFile, watchFolder, theme, settings } from "herdr";
 
 import { resolve } from "./context.js";
 import { directory } from "./directories.js";
 import { folderControl } from "./folder-controls.js";
+import { scanFiles, matchFiles } from "./file-search.js";
 const location = () => resolve();
 const key = () => resolve().key;
 const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html" };
@@ -14,8 +15,21 @@ const PER_FOLDER = 500, TOTAL = 5000;
 
 
 export default class Files {
-  init(_props, cx) {
+  init(props, cx) {
+    this.embedded = props.embedded === true;
     this.saved = new Map();
+    this.query = ""; this.at = 0;
+    this.searchHandle = cx.focus_handle();
+    this.searchScroll = ScrollHandle.new();
+    this.input = InputState.new({ placeholder: "Search files…" });
+    this.input.on("change", (_e, cx) => {
+      const value = this.input.value();
+      if (value !== this.query) this.search(value, cx);
+    });
+    this.input.on("submit", (_e, cx) => {
+      const path = this.searchRows().paths[this.at];
+      if (path && this.current(this.context)) this.show(path, cx);
+    });
     this.entries = new Map(); this.folders = new Set(); this.pending = new Set(); this.marks = {};
     this.refresh(cx);
     cx.timer.every(10000, cx => this.refresh(cx));
@@ -26,13 +40,13 @@ export default class Files {
     this.watched = root;
     const context = this.context;
     cx.spawn(async cx => {
-      try { while (this.context === context) { await watchFolder(root); if (this.current(context)) this.refresh(cx); } }
+      try { while (!this.closed && this.context === context) { await watchFolder(root); if (this.current(context)) this.refresh(cx); } }
       catch { if (this.context === context) this.watched = null; }
     });
   }
 
   current(context) {
-    return this.context === context && key() === context.key;
+    return !this.closed && this.context === context && key() === context.key;
   }
 
   async loadFolder(path, context) {
@@ -45,12 +59,13 @@ export default class Files {
   }
 
   refresh(cx) {
+    if (this.closed) return;
     const { cwd, on } = location(), next = key();
     if (next !== this.context?.key) {
       if (this.context) this.saved.set(this.context.key, { folders: this.folders, file: this.file });
       const saved = this.saved.get(next);
       this.context = { key: next, cwd, on }; this.root = cwd; this.on = on; this.entries = new Map(); this.folders = new Set(saved?.folders);
-      this.pending = new Set(); this.marks = {}; this.show(null); this.watched = null; this.error = location().error; this.limited = false;
+      this.pending = new Set(); this.marks = {}; this.search("", cx); this.input.set_value(""); this.watched = null; this.error = location().error; this.limited = false;
       this.loading = false;
       if (saved?.file) this.show(saved.file, cx);
     }
@@ -102,14 +117,59 @@ export default class Files {
     cx.notify();
   }
 
+  search(query, cx) {
+    if (this.closed) return;
+    // A clear ends the episode: neither its scan nor its preview may publish.
+    this.query = query; this.at = 0; this.show(null);
+    this.searchScroll.scroll_to_item(0);
+    if (!query) { this.scan = null; cx.notify(); return; }
+    if (!this.current(this.context) || !this.root || this.scan) { cx.notify(); return; }
+    const context = this.context;
+    const scan = this.scan = { paths: [], loading: true };
+    cx.spawn(async cx => {
+      try {
+        const result = await scanFiles(context);
+        if (!this.current(context) || this.scan !== scan) return;
+        Object.assign(scan, result);
+      } catch (error) {
+        if (!this.current(context) || this.scan !== scan) return;
+        scan.warning = `Cannot search files: ${error}`;
+      } finally {
+        if (this.current(context) && this.scan === scan) { scan.loading = false; cx.notify(); }
+      }
+    });
+    cx.notify();
+  }
+
+  searchRows() {
+    const paths = this.scan?.paths;
+    if (this.matches?.query !== this.query || this.matches?.snapshot !== paths) {
+      this.matches = { query: this.query, snapshot: paths, ...matchFiles(paths ?? [], this.query) };
+    }
+    return this.matches;
+  }
+
+  searchKey(e, cx) {
+    // This handler lives only around the Input, not around the preview Editor.
+    if (!this.query || !this.current(this.context)) return;
+    if (e.key === "escape") { this.input.set_value(""); this.search("", cx); }
+    else if (e.key === "down" || e.key === "up") {
+      const count = this.searchRows().paths.length;
+      this.at = (this.at + (e.key === "down" ? 1 : count - 1)) % Math.max(1, count);
+      this.show(null); this.searchScroll.scroll_to_item(this.at); cx.notify();
+    } else return;
+    cx.stop_propagation();
+  }
+
   show(path, cx) {
+    const preview = this.preview = {};
     this.code?.release(); this.code = null; this.file = path; this.fileError = null;
     if (!path || !cx) return;
     const context = this.context, root = this.root, on = this.on;
     cx.spawn(async cx => {
       try {
         const text = await readTextFile(`${root}/${path}`, { on });
-        if (this.file !== path || !this.current(context)) return;
+        if (this.preview !== preview || !this.current(context)) return;
         if (text === null) { this.fileError = "This file is no longer available"; return; }
         if (text.includes("\0")) { this.fileError = "Binary file · no text preview"; return; }
         const t = theme(), ext = path.includes(".") ? path.split(".").pop() : "txt";
@@ -117,12 +177,15 @@ export default class Files {
           value: text.length > 400000 ? text.slice(0, 400000) + "\n… (file truncated)" : text,
           font_family: settings().font_family, font_size: 12,
           syntax: { keyword: t.ansi5, string: t.ansi2, comment: t.dim, function: t.ansi4, type: t.ansi3, number: t.ansi1, constant: t.ansi6 } });
-      } catch { if (this.file === path && this.current(context)) this.fileError = "Cannot preview this file (binary, too large, or unreadable)"; }
-      finally { cx.notify(); }
+      } catch { if (this.preview === preview && this.current(context)) this.fileError = "Cannot preview this file (binary, too large, or unreadable)"; }
+      finally { if (this.preview === preview && this.current(context)) cx.notify(); }
     });
   }
 
-  close() { this.code?.release(); }
+  close() {
+    this.closed = true; this.scan = null; this.preview = null;
+    this.code?.release(); this.input.release(); this.searchScroll.release(); this.searchHandle.release();
+  }
 
   rows(prefix, depth, out, t) {
     if (out.length >= TOTAL || depth > 40) return out;
@@ -145,14 +208,27 @@ export default class Files {
       this.scheduled = true;
       cx.spawn(async cx => { this.scheduled = false; this.refresh(cx); cx.notify(); });
     }
-    const t = theme();
+    const t = theme(), matches = this.searchRows(), scan = this.scan;
     return v_flex().id("files").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .when(Boolean(this.file), el => el.child(div().id("files-back").w(20).cursor_pointer().text_color(t.muted).on_click((_e, cx) => { this.show(null); cx.notify(); }).child("←")))
-        .child(div().font_semibold().child("Files"))
-        .child(folderControl())
+        .when(!this.embedded, el => el.child(div().font_semibold().child("Files")).child(folderControl()))
         .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim).child(this.file ?? this.root?.split(/[\\/]/).pop() ?? "")))
-      .when(!this.file, el => el.child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(this.rows("", 0, [], t))
+      .child(div().id("files-search").track_focus(this.searchHandle).flex_none().h(36).mx(8).my(6).px(8).rounded(7).border_1().border_color(t.border)
+        .on_key_down((e, cx) => this.searchKey(e, cx))
+        .child(Input.new(this.input).size_full()))
+      .when(Boolean(this.query) && !this.file, el => el.child(v_flex().id("files-search-results").flex_1().min_h(0).gap(4).p(6)
+        .child(div().flex_none().p(4).text_size(11).text_color(t.dim).child(scan?.loading ? "Searching files…" : !this.root ? "No folder" : `${matches.count} matches${matches.count > 50 ? " · showing first 50" : ""} · ↑↓ select · Enter preview · Esc clear`))
+        .when(Boolean(scan?.limited || scan?.warning), el => el.child(div().id("files-search-notice").flex_none().max_h(80).overflow_y_scrollbar().p(4).text_size(11).text_color(t.dim).child([
+          scan?.limited ? "Partial results: 20,000-file scan limit reached" : "", scan?.warning ? `Partial or unavailable results: ${scan.warning}` : ""
+        ].filter(Boolean).join(" · "))))
+        .when(!scan?.loading && !matches.paths.length, el => el.child(div().p(8).text_color(t.dim).child("No matching files")))
+        .child(v_flex().id("files-search-list").flex_1().min_h(0).overflow_y_scrollbar().track_scroll(this.searchScroll).children(matches.paths.map((path, i) =>
+          v_flex().id(`files-match-${i}`).h(48).flex_shrink_0().px(8).gap(3).rounded(6).cursor_pointer().hover(s => s.bg(t.hover)).when(i === this.at, el => el.bg(t.selected))
+            .on_click((_e, cx) => { if (this.current(this.context)) { this.at = i; this.show(path, cx); cx.notify(); } })
+            .child(div().truncate().child(path.slice(path.lastIndexOf("/") + 1)))
+            .child(div().truncate().text_size(11).text_color(t.dim).child(path)))))))
+      .when(!this.file && !this.query, el => el.child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(this.rows("", 0, [], t))
         .when(Boolean(this.error) || !this.entries.get("")?.length, el => el.child(div().p(8).text_size(12).text_color(t.dim).child(this.error || (this.loading ? "Loading files…" : this.root ? "No files" : "No folder"))))
         .when(this.limited, el => el.child(div().p(8).text_size(11).text_color(t.dim).child("File list limited to 500 entries per folder and 5,000 total")))))
       .when(Boolean(this.file), el => el.child(this.code ? Editor.new(this.code).flex_1().min_h(0) : div().p(12).text_color(t.dim).child(this.fileError || "Loading file…")));

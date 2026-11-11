@@ -105,7 +105,7 @@ test('workspace install composes with Linear, preserves local resources and refu
   const read = (file) => fs.readFile(target(file), 'utf8');
   const source = path.join(options.root, 'customizations/workspace-browser/mods/workspace-browser');
   await fs.mkdir(path.join(source, 'icons'), { recursive: true });
-  for (const file of ['main.js', 'context.js', 'files.js', 'changes.js', 'directories.js', 'directory-search.js', 'folder-observer.js', 'folder-picker.js', 'folder-controls.js', 'mod.json', 'icons/folder.svg', 'LICENSE', 'LICENSE-HERDR', 'NOTICE']) {
+  for (const file of ['main.js', 'browser.js', 'tabs.js', 'context.js', 'files.js', 'file-search.js', 'changes.js', 'directories.js', 'directory-search.js', 'folder-observer.js', 'folder-picker.js', 'folder-controls.js', 'mod.json', 'icons/folder.svg', 'LICENSE', 'LICENSE-HERDR', 'NOTICE']) {
     await fs.writeFile(path.join(source, file), file === 'mod.json' ? '{}' : `synthetic ${file}`);
   }
   await fs.writeFile(path.join(source, 'gpui-kit.d.ts'), 'generated, not shipped');
@@ -152,23 +152,32 @@ test('workspace install composes with Linear, preserves local resources and refu
   assert.equal(await read('mods/workspace-browser/LICENSE-HERDR'), 'synthetic LICENSE-HERDR');
   assert.equal(await read('mods/workspace-browser/NOTICE'), 'synthetic NOTICE');
   assert.equal(await read('mods/workspace-browser/directory-search.js'), 'synthetic directory-search.js');
+  assert.equal(await read('mods/workspace-browser/file-search.js'), 'synthetic file-search.js');
   assert.equal(await read('mods/workspace-browser/folder-observer.js'), 'synthetic folder-observer.js');
   for (const file of ['folder-toolbar.js', 'gpui-kit.d.ts', '.local']) await assert.rejects(fs.access(target(`mods/workspace-browser/${file}`)), { code: 'ENOENT' });
   const layout = JSON.parse(await read(layoutPath));
   const find = (node, id) => node.id === id ? node : node.children?.map((child) => find(child, id)).find(Boolean);
   assert.deepEqual(find(layout, 'files').content, { mod: 'workspace-browser', props: { view: 'files' } });
-  assert.deepEqual(find(layout, 'changes').content, { mod: 'workspace-browser', props: { view: 'changes' } });
+  assert.equal(find(layout, 'changes'), undefined);
+  assert.deepEqual(find(layout, 'tabs').content, { mod: 'workspace-browser', props: { view: 'tabs' } });
   assert.equal(find(layout, 'workspace-folder-button'), undefined);
   assert.deepEqual(layout.floating, [...base.floating, {
     id: 'workspace-folder-observer', content: { mod: 'workspace-browser', props: { view: 'observer' } },
   }]);
   const expected = JSON.parse(preserved['layouts/herdr-setup-linear.json']);
-  for (const view of ['files', 'changes']) find(expected, view).content = { mod: 'workspace-browser', props: { view } };
+  find(expected, 'files').content = { mod: 'workspace-browser', props: { view: 'files' } };
+  find(expected, 'panel-body').children = find(expected, 'panel-body').children.filter(node => node.id !== 'changes');
+  find(expected, 'tabs').content = { mod: 'workspace-browser', props: { view: 'tabs' } };
   expected.floating = layout.floating;
-  assert.deepEqual(layout, expected); // No tab-bar wrapper/width/button or other tree changes.
+  assert.deepEqual(layout, expected); // Only owned content/stack changes and the observer addition.
   const plain = makeWorkspaceLayout(main);
-  assert.deepEqual(plain.children[0], main.children[0]);
+  assert.deepEqual(plain.children[0], { ...main.children[0], content: { mod: 'workspace-browser', props: { view: 'tabs' } } });
+  const previouslyChanges = structuredClone(main);
+  find(previouslyChanges, 'panel-body').active = 'changes';
+  assert.equal(find(makeWorkspaceLayout(previouslyChanges), 'panel-body').active, 'files');
   assert.equal(find(plain, 'tab-bar'), undefined);
+  const customTabs = structuredClone(main); find(customTabs, 'tabs').content.mod = 'personal-tabs';
+  assert.throws(() => makeWorkspaceLayout(customTabs), /expected shipped tabs content/);
   const collision = structuredClone(base);
   collision.floating[0].id = 'workspace-folder-observer';
   await fs.writeFile(target('layouts/collision.json'), JSON.stringify(collision));

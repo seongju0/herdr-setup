@@ -63,6 +63,9 @@ export function makeWorkspaceLayout(base) {
   if (find('workspace-folder-button') || find('workspace-folder-observer')) {
     throw new Error('Base layout already contains workspace folder IDs; merge the layout manually. No files changed.');
   }
+  if (tabs.node.content?.mod !== 'tabs') {
+    throw new Error('Unsupported base layout: expected shipped tabs content; merge custom tabs manually. No files changed.');
+  }
   for (const view of ['files', 'changes']) {
     const panel = body.children?.find((node) => node.id === view);
     if (panel?.type !== 'block' || panel.content?.mod !== view) {
@@ -70,6 +73,9 @@ export function makeWorkspaceLayout(base) {
     }
     panel.content = { ...panel.content, mod: 'workspace-browser', props: { ...panel.content.props, view } };
   }
+  tabs.node.content = { ...tabs.node.content, mod: 'workspace-browser', props: { ...tabs.node.content.props, view: 'tabs' } };
+  body.children = body.children.filter(node => node.id !== 'changes');
+  if (body.active === 'changes') body.active = 'files';
   layout.floating = [...(layout.floating ?? []), {
     id: 'workspace-folder-observer', content: { mod: 'workspace-browser', props: { view: 'observer' } },
   }];
@@ -174,7 +180,7 @@ export async function planInstall({ home = process.env.HERDR_APP_HOME || path.jo
   const source = path.join(root, 'customizations', customization, 'mods', mod);
   const files = await sourceFiles(source);
   const requiredFiles = browser
-    ? ['main.js', 'context.js', 'files.js', 'changes.js', 'directories.js', 'directory-search.js', 'folder-observer.js', 'folder-picker.js', 'folder-controls.js', 'mod.json', 'LICENSE', 'LICENSE-HERDR', 'NOTICE']
+    ? ['main.js', 'browser.js', 'tabs.js', 'context.js', 'files.js', 'file-search.js', 'changes.js', 'directories.js', 'directory-search.js', 'folder-observer.js', 'folder-picker.js', 'folder-controls.js', 'mod.json', 'LICENSE', 'LICENSE-HERDR', 'NOTICE']
     : sidebar
       ? ['main.js', 'body.js', 'ui.js', 'chrome.js', 'agents.js', 'spaces.js', 'create.js', 'directory-search.js', 'directories.js', 'mod.json', 'LICENSE', 'LICENSE-HERDR', 'LICENSE-ICONS-LUCIDE.txt', 'NOTICE',
         ...['search', 'sidebar', 'settings', 'plus', 'branch', 'spinner', 'check', 'pin', 'pin-off', 'clock', 'layers', 'chevron-right', 'chevron-down', 'monitor', 'server'].map(name => `icons/${name}.svg`)]

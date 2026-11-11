@@ -1,10 +1,11 @@
-Files and Changes implementations, directory-listing code, and file-browser icons
+Files, Changes and Tabs implementations, directory-listing code, and file-browser icons
 are adapted from Herdr 0.1.13:
 https://github.com/herdrdev/herdr-app
 
 Herdr's source is licensed under Apache License 2.0; see LICENSE-HERDR.
 The adapted implementations have been modified to use shared per-tab folder
-selection and Pi session metadata. The original browsing, preview, Git diff,
+selection and Pi session metadata, and to combine Files and Changes under one
+Files entry with an internal mode toggle and selected-directory branch context. The original browsing, preview, Git diff,
 and repository-wide commit behavior is retained.
 
 New herdr-setup code is provided under the repository's MIT license.
