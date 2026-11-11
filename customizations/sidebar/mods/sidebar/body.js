@@ -1,6 +1,6 @@
-// A single owner allocates the sidebar body; no layout mutations for list heights.
+// One snapshot/model and one scrolling hierarchy; native behavior stays with its owners.
 import { v_flex, h_flex } from "gpui-base";
-import { agents, terminals, panes, spaces, focused, setAgentOrder, theme } from "herdr";
+import { agents, terminals, panes, spaces, focused, setAgentOrder, theme, openOverlay } from "herdr";
 import AgentsSection from "./agents.js";
 import SpacesSection from "./spaces.js";
 import { button, isRail, sidebarWidth, toggleSidebar } from "./ui.js";
@@ -17,18 +17,25 @@ export default class SidebarBody {
   render(cx) {
     const t = theme();
     const snapshot = { agents: agents(), terminals: terminals(), panes: panes(), spaces: spaces(), focused: focused(), now: Date.now() };
-    const model = this.agents.prepare(snapshot);
+    const ordered = this.spaces.ordered(snapshot.spaces, snapshot.panes);
+    const present = new Set(ordered.map(r => r.w.id));
+    const spaceIds = [...present, ...snapshot.spaces.filter(s => !present.has(s.id)).map(s => s.id)];
+    const model = this.agents.prepare(snapshot, spaceIds);
     setAgentOrder(model.canonicalOrder);
     const collapsed = isRail(this.size?.width ?? sidebarWidth());
-    const maxHeight = this.size ? Math.min(240, Math.floor(this.size.height * 0.38)) : 224;
+    const openCreate = machine => openOverlay({ mod: "sidebar", kind: "dialog", width: 520, height: 600, props: { view: "create", machine: machine ?? "" } });
     return v_flex().id("sidebar-body").size_full().min_h(0).min_w(0).overflow_hidden().bg(t.chrome)
       .on_size_change((size, cx) => {
         if (this.size?.width === size.width && this.size?.height === size.height) return;
         this.size = size;
         cx.notify();
       })
-      .when(!collapsed, el => el.child(this.agents.render(cx, model)))
-      .child(this.spaces.render(cx, { collapsed, statusBySpace: model.statusBySpace, maxHeight }))
+      .when(!collapsed, el => el.child(this.agents.header(t, model)))
+      .child(this.spaces.render(cx, {
+        collapsed, ordered: this.spaces.recentOrder(ordered, snapshot.spaces, snapshot.focused?.space), snapshotSpaces: snapshot.spaces,
+        statusBySpace: model.statusBySpace, pendingSpaceIds: model.pendingSpaceIds,
+        below: id => this.agents.rows(t, id, model), openCreate,
+      }))
       .when(collapsed, el => el.child(h_flex().h(34).flex_none().items_center().justify_center()
         .child(button(t, "sidebar-expand", "sidebar", "Expand sidebar", toggleSidebar))));
   }

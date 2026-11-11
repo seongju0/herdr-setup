@@ -51,6 +51,11 @@ export function statusGlyph(t, status, size = 12) {
   return h_flex().w(16).h(16).flex_none().items_center().justify_center().child(glyph);
 }
 
+export function unreadGlyph(t, id) {
+  return div().id(id).size(5).rounded_full().flex_none().bg(t.accent)
+    .tooltip("Attention not yet opened here").accessibility_label("Attention not yet opened here");
+}
+
 export function avatar(t, space, size = 20) {
   const colors = shared("space.colors") ?? {};
   const palette = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];

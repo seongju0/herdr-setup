@@ -1,12 +1,12 @@
 // Adapted from Herdr v0.1.13 Spaces (Apache-2.0), commit
 // 93b097f6e29fcb2d90a30dea2f03ce4e5dee7981.
 // https://github.com/herdrdev/herdr-app — see LICENSE-HERDR and NOTICE.
-// Modified for bounded companion lists, two-line metadata and workspace avatars.
+// Modified for a unified agent hierarchy, two-line metadata and workspace avatars.
 // Native Git/cache/watch, worktree ordering, machine actions and menus retained.
 
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { icon, avatar, statusGlyph, button } from "./ui.js";
+import { icon, avatar, statusGlyph, unreadGlyph } from "./ui.js";
 import { spaces, machines, panes, run, openOverlay, exec, hc, theme, watchFolder, window } from "herdr";
 
 // Where a space is now: its first terminal's live folder, else where it was made.
@@ -41,6 +41,9 @@ export default class SpacesSection {
     this.reconnecting = JSON.parse(localStorage.getItem("machines.reconnecting") ?? "{}");
     for (const state of Object.values(this.reconnecting)) state.busy = false;
     this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]"));
+    this.foldedSpaces = new Set(JSON.parse(localStorage.getItem("spaces.folded") ?? "[]"));
+    this.recentSpaces = JSON.parse(localStorage.getItem("herdr-setup.spaces.recent") ?? "[]");
+    this.lastFocusedSpace = null;
     this.refreshMachines(cx);
     cx.timer.every(15000, cx => this.refreshMachines(cx));
     // `git status` walks the whole tree, on another machine a process there:
@@ -232,8 +235,7 @@ export default class SpacesSection {
   }
 
   // Spaces in order, each worktree space moved under its main checkout's.
-  ordered() {
-    const sp = spaces(), ps = panes();
+  ordered(sp = spaces(), ps = panes()) {
     const ready = (w) => this.shown.has(w.id) || where(w, ps) in this.git || Date.now() - (this.born[w.id] ??= Date.now()) > 1500;
     for (const w of sp) if (!this.shown.has(w.id) && ready(w)) this.shown.add(w.id);
     const list = sp.map((w, i) => ({ w, i, g: this.git[where(w, ps)] ?? null }));
@@ -268,20 +270,58 @@ export default class SpacesSection {
       }
       this.ordering.machines = [...moved];
     }
-    return out.filter(r => this.shown.has(r.w.id));
+    // Match the machine-grouped display without changing native worktree moves.
+    return out.filter(r => this.shown.has(r.w.id)).sort((a, b) => {
+      const am = a.w.machine || "", bm = b.w.machine || "";
+      return am < bm ? -1 : am > bm ? 1 : 0;
+    });
+  }
+
+  // Display-only MRU: native worktree ordering and agent traversal stay unchanged.
+  recentOrder(rows, snapshotSpaces, focusedSpace) {
+    const live = new Set(snapshotSpaces.map(s => s.id));
+    let recent = this.recentSpaces.filter(id => live.has(id));
+    const active = focusedSpace || snapshotSpaces.find(s => s.active)?.id;
+    if (active && live.has(active) && active !== this.lastFocusedSpace) {
+      recent = [active, ...recent.filter(id => id !== active)];
+      this.lastFocusedSpace = active;
+    }
+    if (JSON.stringify(recent) !== JSON.stringify(this.recentSpaces)) {
+      this.recentSpaces = recent;
+      localStorage.setItem("herdr-setup.spaces.recent", JSON.stringify(recent));
+    }
+    const ranks = new Map(recent.map((id, i) => [id, i]));
+    const groups = [];
+    for (const row of rows) {
+      if (!row.tree || !groups.length) groups.push([]);
+      groups[groups.length - 1].push(row);
+    }
+    const rank = group => Math.min(...group.map(r => ranks.get(r.w.id) ?? Infinity));
+    return groups.sort((a, b) => {
+      const am = a[0].w.machine || "", bm = b[0].w.machine || "";
+      return am < bm ? -1 : am > bm ? 1 : rank(a) - rank(b);
+    }).flat();
   }
 
   // The rows, under a header per machine once one isn't this computer.
-  grouped(t, rows, statusBySpace) {
-    const draw = r => ({ element: this.row(r, t, statusBySpace), height: r.height });
+  grouped(t, rows, statusBySpace, pendingSpaceIds, below, openCreate, snapshotSpaces) {
+    const draw = r => {
+      const children = below(r.w.id);
+      const folded = this.foldedSpaces.has(r.w.id);
+      return [v_flex().id(`space-group-${r.w.id}`).min_w(0).flex_none().mb(8)
+        .child(this.row(r, t, statusBySpace, pendingSpaceIds, children.length > 0))
+        .when(children.length > 0 && !folded, el => el.child(v_flex()
+          .id(`space-agents-${r.w.id}`).min_w(0).flex_none().ml(r.tree ? 48 : 30).pl(4)
+          .border_l(1).border_color(t.border).children(children)))];
+    };
     const remote = [...new Set([...rows.map(r => r.w.machine).filter(Boolean), ...this.machines.map(m => m.name), ...Object.keys(this.reconnecting)])].sort();
     const loading = m => {
       const layout = machines().find(k => k.name === m)?.layout;
       return layout === "loading" || (!layout && this.machines.some(k => k.name === m && k.state === "connected"))
-        || spaces().some(s => (s.machine ?? null) === m && !this.shown.has(s.id));
+        || snapshotSpaces.some(s => (s.machine ?? null) === m && !this.shown.has(s.id));
     };
-    const loadingRow = m => ({ height: 24, element: div().id(`machine-loading-${m ?? "local"}`).h(24).flex_none().px(8).text_size(11).text_color(t.dim).child("Loading…") });
-    if (!remote.length) return loading(null) && !rows.length ? [loadingRow(null)] : rows.map(draw);
+    const loadingRow = m => div().id(`machine-loading-${m ?? "local"}`).h(24).flex_none().px(8).text_size(11).text_color(t.dim).child("Loading…");
+    if (!remote.length) return loading(null) && !rows.length ? [loadingRow(null)] : rows.flatMap(draw);
     const machineNames = [null, ...remote];
     return machineNames.flatMap((m) => {
       const mine = rows.filter((r) => (r.w.machine ?? null) === m);
@@ -311,15 +351,15 @@ export default class SpacesSection {
               .on_click((_e, cx) => { cx.stop_propagation(); this.reconnect(machine, cx); })
               .child(repair?.busy ? "Connecting…" : "Connect"))))
           .when(connected, el => el.child(div().id(`machine-add-${m ?? "local"}`).tooltip(`New space on ${m ?? "this computer"}`).accessibility_label(`New space on ${m ?? "this computer"}`).flex_none().px(4).rounded(4).hover(s => s.bg(t.hover).text_color(t.foreground))
-            .on_click((_e, cx) => { cx.stop_propagation(); run("space.new", { machine: m ?? "" }); }).child("+")))
+            .on_click((_e, cx) => { cx.stop_propagation(); openCreate(m); }).child("+")))
           .child(div().size(6).rounded(3).flex_none().bg(connected ? t.ansi2 : t.dim))
           .child(svg(`mods/sidebar/icons/chevron-${folded ? "right" : "down"}.svg`).size(11).flex_none());
       const empty = h_flex().id(`machine-new-${m ?? "local"}`).tooltip(`New space on ${m ?? "this computer"}`).accessibility_label(`New space on ${m ?? "this computer"}`).h(24).flex_none().px(8).gap(7).items_center().rounded(7)
         .text_size(11).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
-        .on_click(() => run("space.new", { machine: m ?? "" }))
+        .on_click(() => openCreate(m))
         .child(svg("mods/sidebar/icons/plus.svg").size(12)).child("New space there");
-      if (rebuilt) return [{ element: head, height: 24 }];
-      return [{ element: head, height: 24 }, ...(folded ? [] : mine.length ? mine.map(draw) : [loading(m) ? loadingRow(m) : { element: empty, height: 24 }])];
+      if (rebuilt) return [head];
+      return [head, ...(folded ? [] : mine.length ? mine.flatMap(draw) : [loading(m) ? loadingRow(m) : empty])];
     });
   }
 
@@ -345,8 +385,9 @@ export default class SpacesSection {
       .when(g.behind > 0, el => el.child(div().flex_none().text_color(t.muted).child(`↓${g.behind}`)));
   }
 
-  row({ w, i, g, tree, metadata, hasMetadata, height }, t, statusBySpace) {
+  row({ w, i, g, tree, metadata, hasMetadata, height }, t, statusBySpace, pendingSpaceIds, hasAgents) {
     const on = w.active;
+    const folded = this.foldedSpaces.has(w.id);
     const fromIndex = this.pressed === null ? -1 : spaces().findIndex(s => s.id === this.pressed);
     const status = statusBySpace.get(w.id) ?? w.status;
     const tip = this.spaceTip(w, status, g);
@@ -359,8 +400,8 @@ export default class SpacesSection {
       .flex_none()
       .justify_center()
       .rounded(8)
-      .when(on, (el) => el.bg(t.selected))
-      .when(!on, (el) => el.hover((s) => s.bg(t.hover)))
+      .hover(el => el.bg(t.hover))
+      .when(on, el => el.child(div().absolute().left(0).top(6).bottom(6).w(2).rounded(1).bg(t.accent)))
       .when(this.pressed === w.id && this.over !== w.id, (el) => el.opacity(0.5))
       .when(this.pressed !== null && this.over === w.id && this.pressed !== w.id, (el) => el.child(
         div().absolute().left(0).right(0).h(2).bg(t.accent)
@@ -391,16 +432,30 @@ export default class SpacesSection {
         cx.notify();
       })
       .on_mouse_down("right", () => this.menu(w))
-      .child(h_flex().min_w(0).gap(8).items_center()
+      .child(h_flex().min_w(0).gap(6).items_center()
+        .child(div().id(`space-fold-${w.id}`).size(16).flex_none().flex().items_center().justify_center()
+          .when(hasAgents, el => el.cursor_pointer().rounded(4).hover(s => s.bg(t.hover))
+            .tooltip(`${folded ? "Expand" : "Collapse"} agents in ${w.name}`)
+            .accessibility_label(`${folded ? "Expand" : "Collapse"} agents in ${w.name}`)
+            .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+            .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
+            .on_click((_e, cx) => {
+              cx.stop_propagation();
+              folded ? this.foldedSpaces.delete(w.id) : this.foldedSpaces.add(w.id);
+              localStorage.setItem("spaces.folded", JSON.stringify([...this.foldedSpaces]));
+              cx.notify();
+            })
+            .child(icon(folded ? "chevron-right" : "chevron-down", 12, t.muted))))
         .when(Boolean(tree), el => el.pl(18).child(icon("branch", 13, t.dim)))
-        .when(!tree, el => el.child(avatar(t, w)))
+        .when(!tree, el => el.child(avatar(t, w, 18)))
         .child(v_flex().flex_1().min_w(0).justify_center()
-          .child(div().min_w(0).truncate().text_size(12).text_color(t.foreground).child(w.name))
+          .child(div().min_w(0).truncate().text_size(12).font_semibold().text_color(t.foreground).child(w.name))
           .when(hasMetadata, el => el.child(this.gitTail(g, metadata, t))))
+        .when(pendingSpaceIds.has(w.id), el => el.child(unreadGlyph(t, `space-unread-${w.id}`)))
         .child(statusGlyph(t, status, 11)));
   }
 
-  compact({ w, g }, t, statusBySpace) {
+  compact({ w, g }, t, statusBySpace, pendingSpaceIds) {
     const status = statusBySpace.get(w.id) ?? w.status;
     const tip = this.spaceTip(w, status, g);
     return h_flex().id(`space-${w.id}`).h(36).flex_none().min_w(0).rounded(7)
@@ -410,39 +465,33 @@ export default class SpacesSection {
       .hover(el => el.bg(t.hover))
       .on_click(() => run("space.select", { id: w.id }))
       .on_mouse_down("right", () => this.menu(w))
-      .child(avatar(t, w, 22)).child(statusGlyph(t, status, 10));
+      .child(avatar(t, w, 22))
+      .when(pendingSpaceIds.has(w.id), el => el.child(unreadGlyph(t, `space-unread-${w.id}`)))
+      .child(statusGlyph(t, status, 10));
   }
 
-  render(_cx, { collapsed = false, statusBySpace = new Map(), maxHeight = 224 } = {}) {
+  render(_cx, { collapsed = false, statusBySpace = new Map(), pendingSpaceIds = new Set(), ordered, snapshotSpaces, below, openCreate }) {
     const t = theme();
-    // ordered() owns native automatic worktree correction. Prepare only once:
-    // neither measuring the list nor drawing it may repeat those effects.
-    const ordered = this.ordered();
+    // Body supplies the single prepared order; rendering never repeats its effects.
     if (collapsed) {
       // The expanded readiness delay/fold state must never hide a rail workspace.
       const present = new Set(ordered.map(r => r.w.id));
-      const rows = [...ordered, ...spaces().filter(w => !present.has(w.id)).map(w => ({ w, g: null }))];
+      const rows = [...ordered, ...snapshotSpaces.filter(w => !present.has(w.id)).map(w => ({ w, g: null }))];
       return v_flex().id("spaces-rail").flex_1().min_h(0).min_w(0).overflow_hidden().bg(t.chrome)
         .child(v_flex().id("spaces-rail-scroll").flex_1().min_h(0).min_w(0).px(8).py(4)
           .overflow_y_scrollbar().mode("always")
-          .children(rows.map(r => this.compact(r, t, statusBySpace))));
+          .children(rows.map(r => this.compact(r, t, statusBySpace, pendingSpaceIds))));
     }
     const rows = ordered.map(r => {
       const metadata = this.metadata(r.g, r.tree, r.w.name);
       const hasMetadata = Boolean(metadata || r.g?.ahead || r.g?.behind);
       return { ...r, metadata, hasMetadata, height: hasMetadata ? 38 : r.tree ? 24 : 28 };
     });
-    const prepared = this.grouped(t, rows, statusBySpace);
-    const padding = 6;
-    const naturalHeight = 28 + padding + prepared.reduce((height, row) => height + row.height, 0);
-    return v_flex().id("spaces-section").h(Math.min(naturalHeight, maxHeight)).flex_none()
-      .min_h(0).min_w(0).overflow_hidden().bg(t.chrome).border_t(1).border_color(t.border)
-      .child(h_flex().h(28).flex_none().pl(16).pr(10).items_center().justify_between()
-        .text_size(10).text_color(t.dim).child("Spaces")
-        .child(button(t, "space-new", "plus", "New space on this computer", () => run("space.new", { machine: "" }))))
-      .child(v_flex().id("spaces-scroll").flex_1().min_h(0).min_w(0).px(8).pb(padding)
+    const prepared = this.grouped(t, rows, statusBySpace, pendingSpaceIds, below, openCreate, snapshotSpaces);
+    return v_flex().id("spaces-section").flex_1().min_h(0).min_w(0).overflow_hidden().bg(t.chrome)
+      .child(v_flex().id("spaces-scroll").flex_1().min_h(0).min_w(0).px(8).pb(6)
         .overflow_y_scrollbar().mode("always")
         .on_mouse_up("left", (_e, cx) => { this.pressed = null; cx.notify(); })
-        .children(prepared.map(row => row.element)));
+        .children(prepared));
   }
 }

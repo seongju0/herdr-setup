@@ -176,7 +176,7 @@ export async function planInstall({ home = process.env.HERDR_APP_HOME || path.jo
   const requiredFiles = browser
     ? ['main.js', 'context.js', 'files.js', 'changes.js', 'directories.js', 'directory-search.js', 'folder-observer.js', 'folder-picker.js', 'folder-controls.js', 'mod.json', 'LICENSE', 'LICENSE-HERDR', 'NOTICE']
     : sidebar
-      ? ['main.js', 'body.js', 'ui.js', 'chrome.js', 'agents.js', 'spaces.js', 'mod.json', 'LICENSE', 'LICENSE-HERDR', 'LICENSE-ICONS-LUCIDE.txt', 'NOTICE',
+      ? ['main.js', 'body.js', 'ui.js', 'chrome.js', 'agents.js', 'spaces.js', 'create.js', 'directory-search.js', 'directories.js', 'mod.json', 'LICENSE', 'LICENSE-HERDR', 'LICENSE-ICONS-LUCIDE.txt', 'NOTICE',
         ...['search', 'sidebar', 'settings', 'plus', 'branch', 'spinner', 'check', 'pin', 'pin-off', 'clock', 'layers', 'chevron-right', 'chevron-down', 'monitor', 'server'].map(name => `icons/${name}.svg`)]
       : ['main.js', 'api.js', 'model.js', 'mod.json'];
   for (const required of requiredFiles) {
@@ -300,7 +300,7 @@ export async function cli(args = process.argv.slice(2)) {
     : customization === 'github'
       ? 'Access: local GitHub config; existing gh authentication and read-only github.com GraphQL queries via exec; validated PR links via open. Setup copies files only; no credentials copied.'
       : customization === 'sidebar'
-        ? 'Access: native agent/workspace state; read-only Git, local watchers and machine inventory; native selection/pins and worktree-order correction; reconnect only on explicit action. No transcript scanners or new config. Setup copies files only.'
+        ? 'Access: native agent/workspace state; read-only Git, local watchers and machine inventory; shared workspace-browser searchRoots config, bounded directory search/listing and installed-launcher checks; explicit space/program creation, selection/pins and worktree-order correction; reconnect only on explicit action. No transcript scanners or config writes. Setup copies files only.'
         : 'Access: folder listings/previews and Git status/diffs; explicit Commit stages and commits all repository changes. Setup copies files only.');
   for (const { relative, status } of plan.entries) console.log(`${status}: ${relative}`);
   for (const conflict of plan.conflicts) console.log(`conflict: ${conflict}`);

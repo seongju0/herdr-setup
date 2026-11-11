@@ -3,10 +3,13 @@ commit 93b097f6e29fcb2d90a30dea2f03ce4e5dee7981:
 https://github.com/herdrdev/herdr-app
 
 Herdr's source is licensed under Apache License 2.0; see LICENSE-HERDR.
-The adapted code has been modified for task-first rows, activity grouping,
-selected-idle visibility, compact space metadata, responsive height allocation,
-and a workspace-identity rail. Native agent lifecycle, terminal navigation,
-Git/worktree behavior and machine actions remain owned by Herdr.
+The adapted code has been modified for task-first rows grouped under spaces,
+focus-acknowledged unread attention, compact metadata, native space creation,
+and a workspace-identity rail. Directory listing retains the Herdr Files
+implementation via the repository's workspace-browser customization; bounded
+directory search and picker interaction reuse that customization's native code.
+Native agent lifecycle, terminal navigation, Git/worktree behavior and machine
+actions remain owned by Herdr.
 
 The copied SVGs originate in that revision's defaults/mods/workspace-chrome.
 Herdr's THIRD-PARTY-NOTICES identifies Lucide / Feather icons in shipped mods.

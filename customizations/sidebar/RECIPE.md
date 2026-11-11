@@ -1,66 +1,53 @@
 # Minimal sidebar
 
-A quiet native Herdr left sidebar for overseeing coding agents. Tasks get the headline, agent state determines the default groups, and Spaces is compact navigation below. The rest of the window stays yours.
+A native agent overview grouped by space, with focus-acknowledged unread attention and named space creation. Repository source is authoritative; installation and activation are separate actions.
 
-## What you see
-
-A 312px sidebar on the current theme's `chrome` background, with Geist UI type:
-
-1. **Brand, 76px:** 32px clear for macOS traffic lights, then a 44px Herdr identity/search/collapse row. The existing layout's brand block remains draggable; controls stop the drag press.
-2. **Body, flexible:** Agents above Spaces. Agent titles are 13px, metadata 11px, row selection/hover subtle and rounded 6–8px. Fixed status and elapsed-time slots keep columns aligned. Spaces is content-sized, capped at 240px or 38% of body height; both lists scroll independently.
-3. **Footer, 44px:** Settings, update-ready indication, Add machine.
-
-Below 160px width, the body becomes one scrollable workspace-avatar rail with state indicators and a persistent Expand control. Collapsing selects 76px to leave macOS controls room; expansion restores the remembered expanded width, clamped to 260–480px, or 312px initially.
-
-No hard-coded global theme, new terminal styling, bordered card around each agent, context meter or fabricated progress bar.
-
-## How it behaves
-
-- Default groups: Pinned, Needs you, Working, Done, optional Current session, Idle. Empty groups disappear; Idle initially folds. Sort menu also offers Grouped by space.
-- Agent identity: explicitly named tab, else meaningful own terminal title, else program. Workspace/remote machine beneath; tab/address context disambiguates duplicate names.
-- Working uses a native spinning SVG; blocked has an exclamation/attention signal; done a check; idle a ring. Color is supplemented by shape, text and tooltips.
-- Native semantic urgency remains blocked > done > working > idle, including child attention; visual group order puts Working before Done.
-- Clicking a root agent focuses its pane. Child rows open native terminal peek. Child fold and pin controls stop propagation. Native pins remain authoritative.
-- Viewing Done may make core report idle; keep the row in Done until you leave. A selected idle root that is not pinned/held-Done appears once under Current session, not in folded Idle. That promotion must not change canonical next/previous-agent order.
-- Elapsed time is since the last observed own-state change. Normalize done/idle when tracking so viewing a result does not reset it. Do not claim exact historical task duration.
-- Space rows keep native selection, right-click menus, same-machine drag ordering and worktree nesting. Repository/branch/ahead-behind metadata goes below identity, with counts neutral and nonshrinking.
-- Preserve native first-live-folder detection, read-only Git arguments, watch/cache/fallback, machine loading/offline/rebuilt UI, and explicit reconnect behavior. Do not initiate repair just to render.
-- Rail click selects a workspace and stays collapsed; right-click keeps its space menu. Expand for detailed agents. All spaces remain scrollable. Existing native agent next/previous order remains registered even in rail mode.
-- Search opens native picker; footer opens native settings/machine-add. No new global keybindings.
-
-## Built from
-
-`mods/sidebar/main.js` is one native View routing `props().view` to `brand`, `body`, `footer`, or `agents-sort`. `body.js` owns the actual measured width/height and the two stateful sections. `agents.js` owns agent presentation and canonical navigation order; `spaces.js` adapts shipped Git/worktree/machine behavior; `chrome.js` owns brand/footer controls. `ui.js` holds the single styling/width-helper copy. Native callbacks own their context; never keep a `cx` for later.
-
-A generated layout changes only:
+## Shape
 
 ```text
-sidebar (312px, min76/max480, ui_font Geist)
+sidebar (312px, min76/max480, Geist UI)
   brand (76px, draggable) -> sidebar {view:brand}
+    32px OS clearance; logo, create +, search, collapse
   sidebar-lists (flex)    -> sidebar {view:body}
+    Agents / attention header
+    one scroll list: machine > space > agent > child
   sidebar-footer (44px)   -> sidebar {view:footer}
+    Settings / update indication / Add machine
 ```
 
-Generate from an **explicitly selected existing base** with `scripts/setup.mjs`, never a stale whole-window snapshot. Preserve all non-sidebar content: GitHub/Linear buttons and panels, Files/Changes, terminal frames, root floats and unrelated metadata. Reject unsupported sidebar structures/conflicts; no forced overwrite. Installation copies only; activation is separate.
+At widths below160px, show the existing workspace-avatar rail and Expand control. Collapse selects76px; restoration clamps saved width260–480px, default312px. Terminal fonts, zoom, global theme and shortcuts remain unchanged. Compact roots46px, children24px, titles12px and metadata10px.
 
-Live native functions: agents/terminals/panes/spaces/focused/theme/layout/shared; setAgentOrder; native run/openOverlay commands. Spaces retains exec Git, watchFolder and hc machine inventory. Shared width/sort state is namespaced `herdr-setup.sidebar.*`; workspace colors use the existing `space.colors` mapping with deterministic nonpersistent fallback. No transcript scanner, API fetch or new metadata publisher.
+## Policy and ownership
 
-Code adapts Herdr v0.1.13 at `93b097f6e29fcb2d90a30dea2f03ce4e5dee7981`. Package copied SVGs locally and preserve the Apache-2.0 and Lucide/Feather notices. Keep generated typings, config, credentials and runtime state out of the package.
+- `main.js` is the one native View routing body/brand/footer/create. Each role owns its lifecycle; callbacks use their delivered context, not a saved `cx`.
+- `body.js` captures native state, prepares space ordering once, asks Agents for its model and registers stable native next/previous order in expanded and rail modes.
+- `spaces.js` retains Git/cache/watch, automatic worktree ordering, machine loading/offline/rebuilt UI and explicit reconnect, menus, drag ordering and rail navigation. Expanded space rows now have agent rows directly beneath them; no lower Spaces section or height allocation.
+- `agents.js` owns task identity, live child-aware status, per-instance unread observations and agent rows. All spaces remain headers even without reporting agents. Pins stay within each space.
+- Display tiers: blocked, unread/done, pinned, working, idle. Native order breaks ties. Keyboard next/previous deliberately uses stable space/pin/native order instead of these changing tiers.
+- Unread is a separate marker, never a replacement live status. Observed new Done or effective Blocked arms it; native root focus acknowledges it. Native idle or later working does not erase unread while unfocused. Focus wins in the same snapshot; a focused completion is already seen. Blocking remains urgent after acknowledgement. No seq-based completion counter, persisted history or transcript scan.
+- Root rows retain `pane.focus`, children `terminal.peek`, pins `terminal.pin`. Fold/pin do not acknowledge by themselves. Native focus resulting from any command does.
+- Keep explicit tab/own-title/program identity, duplicate disambiguation, exact machine-qualified addresses and normalized observed-state ages. Child error raises parent blocking; child done remains idle; count roots once.
 
-## Watch out
+## Creation
 
-- HTML design studies are approximations, not native rendering proof. Capture a native synthetic preview only after authorized installation/activation; do not substitute a screenshot of the study.
-- Resolve own agent titles, not a shared lead pane's title when multiple agents occupy a tab.
-- Compute canonical navigation before promoting selected idle, or repeated next can bounce between sessions.
-- Core owns completion/attention; don't create a second status protocol or count a child twice as a root.
-- The current active base may change during other work. Re-read it before integration; never erase another owner's GitHub panel.
-- New generated layouts have independent Herdr click-state. Do not copy `.state` files or promise to preserve transient clicks.
-- Proxy native-host tests cannot prove GPU layout/scrolling. `herdr-app check` renders once, not every deferred/async state.
+`chrome.js` top + opens `{view:"create", machine:""}`. Machine + opens the same dialog for that machine. `create.js` owns optional name, directory search/selection, installed-launcher choices and submission. Name blank preserves native automatic naming; Pi is default when installed, otherwise Terminal. Other installed harnesses are explicit alternatives.
 
-## Done when
+Reuse package-local `directory-search.js` and `directories.js` from workspace-browser, with source parity checked in tests. Adapt picker interaction without workspace-browser pin/follow effects. Read shared `config/workspace-browser.json` searchRoots; no sidebar config write or duplicate roots file. Default captured folder, no automatic whole-home scan. fd discovery is bounded/local-only with existing missing-executable-only optional Pi-managed fallback; explicit local paths have bounded cached completion. Remote creation accepts known folders/explicit absolute paths and validates on the target machine.
 
-- Focused native-host and installer tests pass; the full repository test suite remains green.
-- `herdr-app check customizations/sidebar/mods/sidebar` passes.
-- After separately authorized activation, active, quiet, completion, child/pin and grouped views work; long labels and many sessions/spaces remain scrollable at 312px/76px and short height in both appearances.
-- Existing right-side panels, native shortcuts, space menus and worktree behavior remain intact.
-- No shipped mod, global key, settings or right-panel definition is overwritten; no transcript scanning or live telemetry claim is introduced.
+Selecting a result only fills the directory field. Final Create validates absolute/NUL-free directory and name, checks the folder, then calls one native `space.new` with optional name and program-owned argv. Terminal omits argv. Block duplicate submission; cancellation/closure before validation completes must not create later. Validation errors stay inline; after dispatch native Herdr owns actual structural/launch failures. `run` returns null, not confirmed success or transactional rollback.
+
+## Packaging and effects
+
+The installer recursively copies one standalone mod and required resources, clones an explicitly selected supported base sidebar only, and preserves outside-sidebar JSON, panels, floats, settings and credentials. Directory helpers do not depend on another installed mod. Retain upstream/Files attribution. No force mode, snapshots or generated typing changes.
+
+Access: native snapshots and existing selection/pin/worktree actions; read-only Git/watch/machine inventory; bounded directory discovery/listing; local roots config read; installed-launcher checks and explicit space/program creation. Reconnect remains an explicit user action. Never publish local configuration or private frames.
+
+## Verification and limits
+
+Extend existing `tests/sidebar.test.mjs` U1–U3 and creation U4 with real local modules behind native/GPUI/process boundaries; retain `tests/setup.test.mjs` composition/conflict lifecycle. Workspace-browser tests own detailed discovery cases, sidebar checks helper parity. Run documented Node tests and native source check; no new test framework.
+
+Per-instance unread is best effort and can miss whole turns/repeated events between observations. Focus includes incidental keyboard visits. Headless tests do not establish native focus/seen propagation, GPU scrolling or real launch outcomes. A one-shot `herdr-app check` is not live interactive acceptance.
+
+After separately authorized activation, check root focus by row/pane/keyboard, stable traversal, subsequent attention, creation and failures, scrolling/dialog fit, long/many sessions, expanded/rail/short windows, both appearances and existing worktree/machine/menu/panel access. No actual reconnect or remote removal just for QA.
+
+See [README](README.md) for install/activation commands, roots configuration, effects and licensing. Source changes belong in herdr-setup; do not patch only the live home.

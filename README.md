@@ -4,7 +4,7 @@ Reusable native [Herdr](https://herdr.dev) customizations.
 
 ## Customizations
 
-- **[Minimal sidebar](customizations/sidebar/README.md)** — activity-first agents with task names, quieter workspace context, compact Spaces and a workspace-avatar rail. Preserves native statuses, pins and navigation. [Recipe](customizations/sidebar/RECIPE.md)
+- **[Minimal sidebar](customizations/sidebar/README.md)** — agents grouped by space with task-first rows, focus-acknowledged attention, directory/launcher space creation and a workspace-avatar rail. Preserves native statuses, pins and navigation. [Recipe](customizations/sidebar/RECIPE.md)
 - **[GitHub PR panel](customizations/github/README.md)** — organization-wide Authored and For me queues with native GitHub stack context, using existing local gh authentication. [Recipe](customizations/github/RECIPE.md)
 - **[Files and Changes](customizations/workspace-browser/README.md)** — follow the current Pi session directory, including `/move`, or pin a shared folder per Herdr tab. Browse files and repository changes with an in-panel directory-only fuzzy finder and configurable search roots. [Recipe](customizations/workspace-browser/RECIPE.md)
 - **[Linear panel](customizations/linear/README.md)** — your assigned issues, created issues, and personal cycle work in a responsive side panel beside your terminals. [Recipe](customizations/linear/RECIPE.md) · [Narrow preview](customizations/linear/preview.png) · [Wide preview](customizations/linear/preview-wide.png)
