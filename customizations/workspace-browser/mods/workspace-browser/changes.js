@@ -190,15 +190,16 @@ export default class Changes {
     }
     const t = theme(), add = this.files.reduce((n, f) => n + f.add, 0), del = this.files.reduce((n, f) => n + f.del, 0);
     const enabled = Boolean(this.message.trim() && this.root && !this.busy && !this.loading && this.context === key());
-    return v_flex().id("changes").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13).track_focus(this.handle)
+    return v_flex().id("changes").size_full().min_h(0).overflow_hidden().bg(t.background).text_color(t.foreground).text_size(13).track_focus(this.handle)
+      .when(!this.embedded, el => el.rounded(10).border_1().border_color(t.border))
       .on_key_down((e, cx) => {
         if (e.key === "escape" && this.typing) { this.typing = false; this.handle.focus(); cx.stop_propagation(); cx.notify(); }
       })
-      .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
+      .child(h_flex().h(this.embedded ? 28 : 42).flex_none().px(12).gap(8).items_center().border_b(1).border_color(t.border)
         .when(!this.embedded, el => el.child(div().font_semibold().child("Changes")).child(folderControl()))
         .child(div().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted).child(`${this.files.length} files`))
         .child(div().flex_1()).child(div().text_size(11).text_color(t.ansi2).child(`+${add}`)).child(div().text_size(11).text_color(t.ansi1).child(`−${del}`)))
-      .child(div().id("changes-root").px(14).py(4).text_size(11).text_color(t.dim).child(this.root ? `${this.root}${this.on ? ` · ${this.on}` : ""} · All repository changes` : this.error ?? "No repository"))
+      .child(div().id("changes-root").flex_none().truncate().tooltip(this.root ?? this.error ?? "No repository").px(12).py(4).text_size(11).text_color(t.dim).child(this.root ? `${this.root}${this.on ? ` · ${this.on}` : ""} · All repository changes` : this.error ?? "No repository"))
       .child(v_flex().id("changes-list").flex_none().h(Math.min(200, Math.max(44, this.files.length * 28 + 12))).overflow_y_scrollbar().p(6).border_b(1).border_color(t.border).children(this.files.map((f) => {
         const parts = f.path.split("/"), name = parts.pop();
         return h_flex().id(`change-${f.path}`).h(28).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer().when(this.open === f.path, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(f.path, cx))

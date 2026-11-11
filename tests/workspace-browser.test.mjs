@@ -34,6 +34,8 @@ async function nativeHost() {
         else if (method === 'on_click') node.click = args[0];
         else if (method === 'on_key_down') node.keydown = args[0];
         else if (method === 'h') node.height = args[0];
+        else if (method === 'tooltip') node.tooltip = args[0];
+        else if (method === 'border_1') node.bordered = true;
         else if (method === 'max_h') node.maxHeight = args[0];
         else if (method === 'flex_shrink_0') node.shrink = false;
         else if (method === 'overflow_y_scrollbar') node.scrollbar = true;
@@ -201,10 +203,16 @@ test('native directory picker and Files/Changes follow live Pi sessions, pin/unp
   assert.equal(host.browser.changes.root, '/repo');
   host.click('files', 'files-mode-files'); await host.settle();
   assert.equal(host.text('observer'), '', 'The always-mounted observer paints no chrome');
-  assert.match(host.text('files'), /Session · \/repo\/pkg/);
+  assert.match(host.node('files', 'workspace-folder').tooltip, /Session · \/repo\/pkg/);
+  assert.equal(host.node('files', 'files-context-header').height, 52);
+  assert.equal(host.node('files', 'files-preview-header'), undefined, 'The tree has no duplicate folder-name header');
+  assert.equal(host.node('files', 'workspace-files').bordered, true);
+  assert.equal(host.node('files', 'files').bordered, undefined, 'Embedded content has no nested card border');
+  assert.equal(host.node('files', 'files-search').height, 30);
   assert.match(host.text('changes'), /\/repo · All repository changes/);
   host.click('files', 'file-sample.txt'); await host.settle();
   assert.equal(host.files.code.value, 'sample text\n');
+  assert.equal(host.node('files', 'files-preview-header').height, 28, 'Preview retains a compact back/path header');
   host.click('files', 'files-mode-changes'); host.click('files', 'files-mode-files');
   assert.equal(host.files.file, 'sample.txt', 'Mode toggling preserves the selected preview');
   assert.ok(host.state.calls.some(c => c.read === '/repo/pkg/sample.txt' && c.on === null));
@@ -287,7 +295,7 @@ test('native directory picker and Files/Changes follow live Pi sessions, pin/unp
   host.state.terminals[2].report = null; host.state.terminals[0].report = null;
   host.state.focus = { space: 's', tab: 'a', pane: 'shell-pane', terminal: 't2', cwd: '/shell' };
   host.render(); await host.settle(); assert.equal(host.files.root, '/shell');
-  assert.match(host.text('files'), /Pane · \/shell/);
+  assert.match(host.node('files', 'workspace-folder').tooltip, /Pane · \/shell/);
 
   const slowPath = deferred();
   host.state.config = null;

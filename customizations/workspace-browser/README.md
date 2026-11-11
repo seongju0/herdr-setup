@@ -1,6 +1,6 @@
 # Files and Changes
 
-One **Files** tab with an **All files / Changes** toggle. All files is the default; switching modes preserves the open file/diff and shared folder selection. Below the folder control, the current Git branch is shown when available (or a short commit ID for detached HEAD). Branch reads use the selected directory and machine, including pinned folders and worktrees; non-Git/unavailable folders have no branch label.
+One **Files** tab with an **All files / Changes** toggle. All files is the default; switching modes preserves the open file/diff and shared folder selection. A compact clickable folder/worktree name and muted branch metadata share the header with the mode toggle. Full path, selection source and machine details are available on hover; the current Git branch appears when available (or a short commit ID for detached HEAD). There is no duplicate folder-title row or nested content card; a compact filename/back row appears only while previewing a file. Branch reads use the selected directory and machine, including pinned folders and worktrees; non-Git/unavailable folders have no branch label.
 
 Follow your current Pi session directory in Herdr, or pin a folder for both panels. **macOS · Herdr 0.1.13**. [Recipe](RECIPE.md)
 

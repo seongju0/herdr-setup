@@ -209,12 +209,13 @@ export default class Files {
       cx.spawn(async cx => { this.scheduled = false; this.refresh(cx); cx.notify(); });
     }
     const t = theme(), matches = this.searchRows(), scan = this.scan;
-    return v_flex().id("files").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
-      .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
+    return v_flex().id("files").size_full().min_h(0).overflow_hidden().bg(t.background).text_color(t.foreground).text_size(13)
+      .when(!this.embedded, el => el.rounded(10).border_1().border_color(t.border))
+      .when(!this.embedded || Boolean(this.file), el => el.child(h_flex().id("files-preview-header").h(this.embedded ? 28 : 42).flex_none().px(12).gap(8).items_center().border_b(1).border_color(t.border)
         .when(Boolean(this.file), el => el.child(div().id("files-back").w(20).cursor_pointer().text_color(t.muted).on_click((_e, cx) => { this.show(null); cx.notify(); }).child("←")))
         .when(!this.embedded, el => el.child(div().font_semibold().child("Files")).child(folderControl()))
-        .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim).child(this.file ?? this.root?.split(/[\\/]/).pop() ?? "")))
-      .child(div().id("files-search").track_focus(this.searchHandle).flex_none().h(36).mx(8).my(6).px(8).rounded(7).border_1().border_color(t.border)
+        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(this.file ?? this.root?.split(/[\\/]/).pop() ?? ""))))
+      .child(div().id("files-search").track_focus(this.searchHandle).flex_none().h(30).mx(8).my(4).px(8).rounded(6).border_1().border_color(t.border)
         .on_key_down((e, cx) => this.searchKey(e, cx))
         .child(Input.new(this.input).size_full()))
       .when(Boolean(this.query) && !this.file, el => el.child(v_flex().id("files-search-results").flex_1().min_h(0).gap(4).p(6)

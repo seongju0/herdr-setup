@@ -43,16 +43,13 @@ export default class Browser {
     }
     // Keep both views synchronized across folder/tab switches without losing previews.
     const files = this.files.render(cx), changes = this.changes.render(cx);
-    return v_flex().id("workspace-files").size_full().min_h(0).overflow_hidden().rounded(10).bg(t.background).text_color(t.foreground)
-      .child(h_flex().h(42).flex_none().px(14).gap(8).items_center()
-        .child(div().font_semibold().child("Files")).child(div().flex_1())
+    return v_flex().id("workspace-files").size_full().min_h(0).overflow_hidden().rounded(10).border_1().border_color(t.border).bg(t.background).text_color(t.foreground)
+      .child(h_flex().id("files-context-header").h(52).flex_none().px(8).gap(6).items_center()
+        .child(folderControl({ compact: true, branch: this.branchKey === context.key ? this.branch : null }))
         .children([["files", "All files"], ["changes", "Changes"]].map(([mode, label]) =>
-          div().id(`files-mode-${mode}`).px(8).py(4).rounded(6).text_size(12).cursor_pointer()
+          div().id(`files-mode-${mode}`).flex_none().px(7).py(4).rounded(6).text_size(11).cursor_pointer()
             .bg(this.mode === mode ? t.selected : t.background).hover(s => s.bg(t.hover))
             .on_click((_e, cx) => { this.mode = mode; cx.notify(); }).child(label))))
-      .child(h_flex().px(6).pb(4).min_w(0).flex_none().child(folderControl()))
-      .when(this.branchKey === context.key && Boolean(this.branch), el => el.child(
-        div().id("files-branch").px(14).pb(6).flex_none().truncate().text_size(11).text_color(t.dim).child(this.branch)))
       .child(this.mode === "changes" ? changes : files);
   }
 
