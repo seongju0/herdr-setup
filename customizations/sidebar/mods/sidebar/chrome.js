@@ -2,11 +2,22 @@
 // Modified for two-row OS clearance and a compact sidebar footer.
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, run, updates, openOverlay } from "herdr";
+import { theme, run, updates, openOverlay, nextCommand } from "herdr";
 import { button, icon, isRail, toggleSidebar } from "./ui.js";
 
 export default class Chrome {
-  init(config) { this.footer = config.view === "footer"; }
+  init(config, cx) {
+    this.footer = config.view === "footer";
+    // Only the persistent brand owns this mod's command queue, not the footer.
+    if (!this.footer) cx.spawn(async cx => {
+      for (;;) {
+        if (await nextCommand() === "toggle-sidebar") {
+          toggleSidebar();
+          cx.notify();
+        }
+      }
+    });
+  }
 
   render() {
     const t = theme();

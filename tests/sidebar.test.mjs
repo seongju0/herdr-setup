@@ -10,6 +10,7 @@ const ok = stdout => ({ code: 0, stdout, stderr: '' });
 // GPUI/native snapshots, storage, clock and external process/watch are replaced.
 async function nativeHost(fixture = {}) {
   const modules = new Map(), shared = new Map(), storage = new Map(fixture.storage ?? []), queue = [], failures = [], timers = [];
+  let commandWaiter;
   const state = {
     now: 1000000, windowActive: true, width: 312, calls: [], overlays: [], orders: [], notifications: 0, stopped: 0,
     agents: [], terminals: [], panes: [], focus: {}, knownAgents: [], configText: null,
@@ -60,6 +61,10 @@ async function nativeHost(fixture = {}) {
     spaces: () => state.spaces, agents: () => state.agents, panes: () => state.panes, terminals: () => state.terminals,
     machines: () => state.machines, focused: () => state.focus, props: () => state.props, keys: () => [],
     theme: () => ({ selected: '#333333', hover: '#222222', border: '#444444', muted: '#888888', dim: '#777777', foreground: '#eeeeee', accent: '#aacc44', blocked: '#cc8800', working: '#4488cc', done: '#44aa77', idle: '#999999' }),
+    nextCommand: () => new Promise(resolve => {
+      assert.equal(commandWaiter, undefined, 'Only the brand consumes sidebar commands');
+      commandWaiter = resolve;
+    }),
     window: () => ({ platform: 'macos', active: state.windowActive }), updates: () => ({ app: { ready: true } }),
     layout: () => ({ id: 'sidebar', size: { px: state.width } }),
     shared: key => shared.get(key), setShared: (key, value) => shared.set(key, value),
@@ -133,6 +138,12 @@ async function nativeHost(fixture = {}) {
   };
   render();
   return { state, storage, shared, timers, render, settle, click, node, mount,
+    async command(command) {
+      await settle();
+      assert.ok(commandWaiter, 'Sidebar command listener is mounted');
+      const deliver = commandWaiter; commandWaiter = undefined;
+      deliver(command); await settle();
+    },
     create(config = {}) { const view = mount('create', config); render(); return view.implementation; },
     closeCreate() { views.create.close(cx); },
     text: (id, role = 'body') => text(id ? node(id, role) : trees[role]),
@@ -361,12 +372,23 @@ test('U3 unified scroll, worktree/machine controls and rail retain native naviga
   assert.deepEqual(spaceRows().slice(0, 3), ['space-s2', 'space-s0', 'space-s1'], 'Explicit pins survive sidebar recreation');
   assert.equal(host.state.calls.filter(c => c.command === 'space.move').length, moves, 'Pins are display priority, not native reorder writes');
   assert.deepEqual(host.order(), canonical);
-  host.click('sidebar-toggle', 'brand');
+  const resizeCount = () => host.state.calls.filter(c => c.command === 'layout.resize').length;
+  const beforeShortcut = resizeCount();
+  const bindings = JSON.parse(await readFile(new URL('../customizations/keybindings/keys.json', import.meta.url), 'utf8'))['layout:my-herdr'];
+  assert.equal(bindings['cmd-b'], 'sidebar.toggle-sidebar');
+  assert.equal(bindings['cmd-shift-e'], 'layout.toggle:panel');
+  await host.command(bindings['cmd-b'].slice('sidebar.'.length));
+  assert.equal(resizeCount(), beforeShortcut + 1, 'One shortcut collapses once, despite brand/body/footer instances');
   assert.equal(host.state.calls.at(-1).args.px, 76);
   host.measure(76, 300); assert.deepEqual(host.order(), canonical);
   assert.ok(host.node('sidebar-expand'));
   assert.ok(host.node('brand-expand', 'brand'), 'Minimal rail header keeps an expand control instead of the logo');
   host.click('brand-expand', 'brand'); assert.equal(host.state.calls.at(-1).args.px, 312);
+  host.state.width = 356; host.render();
+  await host.command('toggle-sidebar'); assert.equal(host.state.width, 76);
+  await host.command('toggle-sidebar'); assert.equal(host.state.width, 356, 'Shortcut restores the same saved width as the button');
+  assert.ok(host.state.calls.filter(c => c.command?.startsWith('layout.')).every(c => c.command === 'layout.resize'), 'Collapse never hides the sidebar');
+  host.state.width = 312; host.render();
   host.click('sidebar-toggle', 'brand'); host.measure(76, 300);
   assert.equal(host.node('spaces-rail-scroll').styles.overflow_y_scrollbar, true);
   assert.equal(host.node('spaces-rail-scroll').children[0].id, 'space-s2', 'Rail keeps explicit space-pin priority');

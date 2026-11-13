@@ -15,7 +15,7 @@ sidebar (312px, min76/max480, Geist UI)
     Settings / update indication / Add machine
 ```
 
-At widths below160px, show the existing workspace-avatar rail and Expand control. Collapse selects76px; restoration clamps saved width260–480px, default312px. Terminal fonts, zoom, global theme and shortcuts remain unchanged. Compact roots46px, children24px, titles12px and metadata10px.
+At widths below160px, show the existing workspace-avatar rail and Expand control. Collapse selects76px; restoration clamps saved width260–480px, default312px. Terminal fonts, zoom and global theme remain unchanged. `sidebar.toggle-sidebar` reuses `ui.js.toggleSidebar` to switch between the rail and saved expanded width, never hiding the sidebar. Only the persistent brand role consumes `nextCommand()`; body/footer/dialog instances must not compete for commands. A personal `layout:my-herdr` binding may map `cmd-b` to this command; packaging must not overwrite personal keys automatically. Compact roots46px, children24px, titles12px and metadata10px.
 
 ## Policy and ownership
 
