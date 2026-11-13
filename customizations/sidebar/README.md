@@ -12,7 +12,7 @@ A native Herdr sidebar with agents grouped under their spaces, task-first rows a
 - **Unread is separate from status:** an observed completion or new blocking state adds a small unread marker. Focusing that root agent by sidebar, pane or native keyboard navigation acknowledges it. Genuine blocking remains urgent until resolved. Folding and pinning do not themselves acknowledge.
 - **Recognizable rail:** workspace avatars, truthful aggregate state and separate unread marks. Every workspace remains reachable while collapsed; expand for detailed agents.
 
-The sidebar starts at 312px and collapses to 76px, leaving macOS window controls clear. It uses Geist UI text and your theme's colors. Search, Settings and Add machine remain native; no global keybindings or terminal typography change.
+The sidebar starts at 312px and collapses to 76px, leaving macOS window controls clear. Its minimal header reads **herdr** in lowercase with no logo; the collapsed header shows an expand control instead. This does not rename the macOS app or change its app icon. It uses Geist UI text and your theme's colors. Search, Settings and Add machine remain native; no global keybindings or terminal typography change.
 
 Native next/previous follows stable native space order (independent of space-pin display priority), then pins/native agent order within each space. It deliberately does not follow the changing attention-first visual order, so acknowledging an agent does not make traversal revisit it. The header's attention control cycles through agents currently needing attention.
 
@@ -21,6 +21,13 @@ Space pins affect display only; they do not issue native reorder or agent-pin co
 Elapsed times describe the agent's **last observed state change**, not task duration or an ETA. Live child blocking raises its parent's urgency once; child completion does not create an independent unread history. Child rows open native terminal peek. Focus resulting from any native action acknowledges the actually focused root.
 
 Unread is **per sidebar instance and best effort**: native viewing on another client can clear Done without clearing this window's unread, but turns or repeated states entirely between observations may be missed. Restarting/recreating the layout drops these extra marks. No transcript-derived history, event counter or persistence guarantee is implied. An unacknowledged marker can coexist with a later Working state.
+
+## Right-click actions
+
+- **Agent row:** opens Herdr's native pane menu for that exact agent, including **Close pane**, split and zoom. Closing uses Herdr's existing close flow and affects the chosen pane, not every agent in its tab. Opening the menu does not focus the agent or acknowledge unread attention.
+- **Space header or rail avatar:** offers **New tab / agent…** alongside Rename, native Git/worktree actions and Close. The launcher offers Terminal and installed agents for the clicked space's machine. Choosing one creates a new tab in that exact space—even if a different space is focused. Program argv comes from Herdr's installed-agent table; no invented shell command or focus-then-launch workaround.
+
+Checking launchers or opening either menu starts/closes no programs. Missing targets and launcher-check failures do not redirect creation to the active space. Native commands own close/launch failures and any confirmation UI; the sidebar does not claim awaited success.
 
 ## Create a space
 
@@ -53,7 +60,7 @@ Local absolute or `~/` paths can complete outside those roots using bounded, cac
 
 macOS and native Herdr APIs inspected with **0.1.15**; adapted upstream components originate in **0.1.13**. Installer/tests use Node **26**. The mod uses native GPUI JavaScript without Node, React, a webview or a server.
 
-The mod reads native agent, terminal, space and focus state. Spaces retains local/remote read-only Git, local Git-folder watches, machine inventory and native worktree-order correction. Creation reads the existing roots config, performs bounded directory discovery/listing and checks installed launchers. Explicit actions can create a space/program, select/reorder spaces, pin agents, peek children, open native menus or reconnect a rebuilt machine. It does not read transcripts, contact an application API, write configuration, publish Pi metadata or calculate context/cost/progress estimates.
+The mod reads native agent, terminal, space and focus state. Spaces retains local/remote read-only Git, local Git-folder watches, machine inventory and native worktree-order correction. Creation reads the existing roots config, performs bounded directory discovery/listing and checks installed launchers. Explicit actions can create a space/program or a tab in a chosen space, invoke native pane/space close actions, select/reorder spaces, pin agents, peek children, open native menus or reconnect a rebuilt machine. It does not read transcripts, contact an application API, write configuration, publish Pi metadata or calculate context/cost/progress estimates.
 
 ## Install separately from activation
 

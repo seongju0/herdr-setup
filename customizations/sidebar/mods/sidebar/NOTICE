@@ -9,7 +9,10 @@ and a workspace-identity rail. Directory listing retains the Herdr Files
 implementation via the repository's workspace-browser customization; bounded
 directory search and picker interaction reuse that customization's native code.
 Native agent lifecycle, terminal navigation, Git/worktree behavior and machine
-actions remain owned by Herdr.
+actions remain owned by Herdr. The space context menu and targeted tab launcher
+also adapt the installed shipped menu/new-menu behavior under the same upstream
+license, adding explicit clicked-space targeting. Agent context menus delegate
+to Herdr's shipped pane menu; the close/launch commands are not reimplemented.
 
 The copied SVGs originate in that revision's defaults/mods/workspace-chrome.
 Herdr's THIRD-PARTY-NOTICES identifies Lucide / Feather icons in shipped mods.

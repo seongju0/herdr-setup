@@ -53,11 +53,12 @@ async function nativeHost(fixture = {}) {
         submit() { handlers.get('submit')?.({}, cx); } };
     } },
     Input: { new(input) { return element(input); } },
+    ScrollHandle: { new() { return { scroll_to_item() {} }; } },
     home: () => '/home/synthetic', appHome: () => '/app',
     readTextFile: async path => { state.calls.push({ read: path }); return state.configText; },
     knownAgents: async options => { state.calls.push({ knownAgents: options }); if (state.launcherError) throw new Error(state.launcherError); return state.knownAgents; },
     spaces: () => state.spaces, agents: () => state.agents, panes: () => state.panes, terminals: () => state.terminals,
-    machines: () => state.machines, focused: () => state.focus, props: () => state.props,
+    machines: () => state.machines, focused: () => state.focus, props: () => state.props, keys: () => [],
     theme: () => ({ selected: '#333333', hover: '#222222', border: '#444444', muted: '#888888', dim: '#777777', foreground: '#eeeeee', accent: '#aacc44', blocked: '#cc8800', working: '#4488cc', done: '#44aa77', idle: '#999999' }),
     window: () => ({ platform: 'macos', active: state.windowActive }), updates: () => ({ app: { ready: true } }),
     layout: () => ({ id: 'sidebar', size: { px: state.width } }),
@@ -102,8 +103,8 @@ async function nativeHost(fixture = {}) {
       } else bindings[match[1]] = dependency.default;
     }
     source = source.replace(/^import .*;\n/gm, '');
-    const exports = [...source.matchAll(/export (?:async )?(?:const|function) (\w+)/g)].map(m => m[1]);
-    source = source.replace(/export default class (\w+)/, 'const Default = class $1').replace(/export (async )?(const|function)/g, '$1$2');
+    const exports = [...source.matchAll(/export (?:async )?(?:const|function|class) (\w+)/g)].map(m => m[1]);
+    source = source.replace(/export default class (\w+)/, 'const Default = class $1').replace(/export (async )?(const|function|class)/g, '$1$2');
     const body = `(function(${Object.keys(bindings).join(',')}) { ${source}\nreturn { ${[...exports, ...(source.includes('const Default =') ? ['default: Default'] : [])].join(',')} }; })`;
     const result = new vm.Script(body, { filename: name }).runInContext(sandbox)(...Object.values(bindings));
     modules.set(name, result); return result;
@@ -188,6 +189,13 @@ test('U1 unified space hierarchy retains identity, pins, child urgency and nativ
   assert.match(host.text('ag-attention'), /2 need attention/);
   assert.match(host.node('ag-remote/root').tooltip, /working.*blocked/);
   assert.ok(host.node('unread-done')); assert.ok(host.node('space-unread-s'));
+  const callsBeforeMenu = host.state.calls.length, stoppedBeforeMenu = host.state.stopped;
+  host.node('ag-remote/root').on_mouse_down_right({}, { stop_propagation() { host.state.stopped++; } });
+  assert.equal(host.state.stopped, stoppedBeforeMenu + 1);
+  const agentMenu = host.state.overlays.at(-1);
+  assert.equal(agentMenu.mod, 'menu');
+  assert.deepEqual(JSON.parse(JSON.stringify(agentMenu.props)), { tab: 'pane', target: { pane: 'pane-remote/root', terminal: 'remote/root' } });
+  assert.equal(host.state.calls.length, callsBeforeMenu, 'Opening a menu must not focus, close or acknowledge an agent');
   host.click('ag-remote/root');
   assert.equal(host.state.calls.at(-1).command, 'pane.focus');
   assert.equal(host.state.calls.at(-1).args.pane, 'pane-remote/root');
@@ -314,6 +322,8 @@ test('U3 unified scroll, worktree/machine controls and rail retain native naviga
   assert.equal(host.state.overlays.at(-1).props.machine, 'ready');
   host.click('space-create', 'brand');
   assert.equal(host.state.overlays.at(-1).props.machine, '');
+  assert.match(host.text(null, 'brand'), /herdr/);
+  assert.ok(!host.nodes('brand').some(n => n?.asset === 'frame/welcome/herdr.png'), 'No header logo');
   host.click('search', 'brand'); assert.equal(host.state.calls.at(-1).args.name, 'picker');
   host.click('settings', 'footer'); assert.equal(host.state.calls.at(-1).command, 'app.settings');
   host.click('machine', 'footer'); assert.equal(host.state.calls.at(-1).args.name, 'machine-add');
@@ -355,6 +365,9 @@ test('U3 unified scroll, worktree/machine controls and rail retain native naviga
   assert.equal(host.state.calls.at(-1).args.px, 76);
   host.measure(76, 300); assert.deepEqual(host.order(), canonical);
   assert.ok(host.node('sidebar-expand'));
+  assert.ok(host.node('brand-expand', 'brand'), 'Minimal rail header keeps an expand control instead of the logo');
+  host.click('brand-expand', 'brand'); assert.equal(host.state.calls.at(-1).args.px, 312);
+  host.click('sidebar-toggle', 'brand'); host.measure(76, 300);
   assert.equal(host.node('spaces-rail-scroll').styles.overflow_y_scrollbar, true);
   assert.equal(host.node('spaces-rail-scroll').children[0].id, 'space-s2', 'Rail keeps explicit space-pin priority');
   assert.deepEqual(host.node('spaces-rail-scroll').children.map(n => n.id).sort(), host.state.spaces.map(s => 'space-' + s.id).sort());
@@ -362,11 +375,70 @@ test('U3 unified scroll, worktree/machine controls and rail retain native naviga
   host.click('space-s1'); assert.equal(host.state.calls.at(-1).args.id, 's1'); assert.equal(host.state.width, 76);
   host.node('space-s1').on_mouse_down_right({}, {});
   assert.equal(host.state.overlays.at(-1).props.target.id, 's1');
+  assert.equal(host.state.overlays.at(-1).props.view, 'space-menu');
   host.click('sidebar-expand'); assert.equal(host.state.calls.at(-1).args.px, 312);
   assert.ok(host.state.calls.some(c => c.process === 'git'));
   assert.ok(host.state.calls.filter(c => c.process).every(c => c.process === 'git'));
   assert.ok(host.state.calls.some(c => c.watch === '/repo/.git'));
   assert.ok(host.state.calls.every(c => !c.hc || c.hc[1] === 'ls'));
+});
+
+test('U5 space context actions and tab launcher retain the clicked machine/space rather than focus', async () => {
+  const pi = { key: 'pi', name: 'Pi', installed: true, run: ['pi', '--interactive'] };
+  const host = await nativeHost({
+    spaces: [
+      { id: 'local', name: 'Active local', folder: '/repo', active: true, tabs: [] },
+      { id: 'remote/s', name: 'Remote target', machine: 'remote', folder: '/srv/repo', tabs: [{ id: 'remote/tab' }] },
+    ],
+    panes: [{ tab: 'remote/tab', cwd: '/srv/live' }],
+    knownAgents: [{ key: 'missing', name: 'Not installed', installed: false, run: ['missing'] }, pi],
+  });
+  host.node('space-remote/s').on_mouse_down_right({}, {});
+  const config = host.state.overlays.at(-1).props;
+  assert.equal(config.target.id, 'remote/s');
+  host.mount('space-menu', config); await host.settle();
+  assert.match(host.text(null, 'space-menu'), /New tab \/ agent.*Rename.*New worktree.*Open worktree.*Remove worktree.*Close/);
+  assert.ok(host.state.calls.some(c => c.process === 'git' && c.on === 'remote' && c.cwd === '/srv/live'), 'Git detection uses the target machine/live folder');
+  host.click('space-menu-1', 'space-menu');
+  assert.deepEqual(JSON.parse(JSON.stringify(host.state.calls.at(-1))), { command: 'space.rename', args: { id: 'remote/s' } });
+  host.mount('space-menu', config); await host.settle();
+  host.click('space-menu-3', 'space-menu');
+  assert.equal(host.state.overlays.at(-1).mod, 'worktree');
+  assert.deepEqual(JSON.parse(JSON.stringify(host.state.overlays.at(-1).props)), { space: 'remote/s', action: 'open' });
+  host.mount('space-menu', config); await host.settle();
+  host.node('space-menu', 'space-menu').on_key_down({ key: 'up' }, { notify() {} });
+  host.node('space-menu', 'space-menu').on_key_down({ key: 'enter' }, { notify() {} });
+  assert.deepEqual(JSON.parse(JSON.stringify(host.state.calls.at(-1))), { command: 'space.close', args: { id: 'remote/s' } });
+  host.mount('space-menu', config); await host.settle();
+  host.click('space-menu-0', 'space-menu');
+  const launcher = host.state.overlays.at(-1);
+  assert.equal(launcher.props.view, 'tab-launcher');
+  assert.equal(launcher.height, 400);
+  host.mount('tab-launcher', launcher.props); await host.settle();
+  assert.ok(host.state.calls.some(c => c.knownAgents?.on === 'remote'));
+  assert.doesNotMatch(host.text(null, 'tab-launcher'), /Not installed/);
+  assert.equal(host.state.calls.filter(c => c.command === 'tab.new').length, 0, 'Opening/discovery does not launch');
+  host.node('tab-launcher', 'tab-launcher').on_key_down({ key: 'down' }, { notify() {} });
+  host.node('tab-launcher', 'tab-launcher').on_key_down({ key: 'enter' }, { notify() {} });
+  assert.deepEqual(JSON.parse(JSON.stringify(host.state.calls.at(-1))), { command: 'tab.new', args: { space: 'remote/s', name: 'Pi', argv: pi.run } });
+  host.mount('tab-launcher', launcher.props); await host.settle();
+  host.click('tab-launcher-0', 'tab-launcher');
+  assert.deepEqual(JSON.parse(JSON.stringify(host.state.calls.at(-1))), { command: 'tab.new', args: { space: 'remote/s' } });
+  assert.ok(!host.state.calls.some(c => c.command === 'space.select' || c.command === 'pane.focus'));
+
+  const failed = await nativeHost({ launcherError: 'Unavailable' });
+  failed.mount('tab-launcher', { target: { id: 's' } }); await failed.settle();
+  assert.match(failed.text(null, 'tab-launcher'), /Could not check installed agents/);
+  assert.equal(failed.node('tab-launcher-1', 'tab-launcher'), undefined);
+  failed.click('tab-launcher-0', 'tab-launcher');
+  assert.equal(failed.state.calls.at(-1).args.space, 's', 'Failed agent discovery still permits explicit Terminal');
+  host.state.spaces = host.state.spaces.filter(s => s.id !== 'remote/s'); host.render();
+  assert.match(host.text(null, 'tab-launcher'), /Space is no longer available/);
+  const launches = host.state.calls.filter(c => c.command === 'tab.new').length;
+  host.node('tab-launcher', 'tab-launcher').on_key_down({ key: 'enter' }, { notify() {} });
+  host.mount('tab-launcher', { target: {} }); await host.settle();
+  assert.equal(host.node('tab-launcher-0', 'tab-launcher'), undefined, 'Missing target cannot become active-space creation');
+  assert.equal(host.state.calls.filter(c => c.command === 'tab.new').length, launches);
 });
 
 test('U4 routed creation validates folder and dispatches one native space with the installed launcher', async () => {

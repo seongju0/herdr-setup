@@ -371,7 +371,7 @@ test('sidebar install uses an explicit base, copies complete native package with
   for (const entry of installed.entries.filter(entry => entry.relative.startsWith('mods/sidebar/'))) {
     assert.deepEqual(await fs.readFile(target(entry.relative)), await fs.readFile(path.join(source, entry.relative.slice('mods/sidebar/'.length))));
   }
-  for (const file of ['create.js', 'directory-search.js', 'directories.js']) {
+  for (const file of ['create.js', 'context-menu.js', 'directory-search.js', 'directories.js']) {
     assert.ok(installed.entries.some(entry => entry.relative === `mods/sidebar/${file}`), `${file} is packaged for independent installation`);
   }
   assert.equal(installed.entries.filter(entry => /icons\/.*\.svg$/.test(entry.relative)).length, 15);

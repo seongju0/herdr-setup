@@ -1,6 +1,6 @@
 // Adapted from Herdr v0.1.13 workspace-chrome (Apache-2.0; see LICENSE-HERDR).
 // Modified for two-row OS clearance and a compact sidebar footer.
-import { div, image } from "gpui-kit";
+import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, updates, openOverlay } from "herdr";
 import { button, icon, isRail, toggleSidebar } from "./ui.js";
@@ -30,9 +30,9 @@ export default class Chrome {
       .child(h_flex().h(32).flex_none())
       .child(h_flex().h(44).min_w(0).px(collapsed ? 0 : 16).gap(8).items_center()
         .when(collapsed, el => el.justify_center())
-        .child(image("frame/welcome/herdr.png").size(22).flex_none().rounded(6))
+        .when(collapsed, el => el.child(button(t, "brand-expand", "sidebar", "Expand sidebar", toggleSidebar)))
         .when(!collapsed, el => el
-          .child(h_flex().flex_1().min_w(0).font_semibold().text_size(14).text_color(t.foreground).child("Herdr"))
+          .child(h_flex().flex_1().min_w(0).font_semibold().text_size(14).text_color(t.foreground).child("herdr"))
           .child(button(t, "space-create", "plus", "Create space on this computer", () => openOverlay({ mod: "sidebar", kind: "dialog", width: 520, height: 600, props: { view: "create", machine: "" } })))
           .child(button(t, "search", "search", "Search tabs", () => run("mod.open", { name: "picker" })))
           .child(button(t, "sidebar-toggle", "sidebar", "Collapse sidebar", toggleSidebar))));

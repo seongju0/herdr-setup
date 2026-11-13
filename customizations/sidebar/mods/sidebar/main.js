@@ -3,6 +3,7 @@ import { props } from "herdr";
 import SidebarBody from "./body.js";
 import Chrome from "./chrome.js";
 import CreateSpace from "./create.js";
+import { SpaceMenu, TabLauncher } from "./context-menu.js";
 
 // One native root owns each role's retained state and callback invalidation.
 export default class Sidebar extends View {
@@ -11,6 +12,7 @@ export default class Sidebar extends View {
     this.role = config.view ?? "body";
     const Implementation = new Map([
       ["body", SidebarBody], ["brand", Chrome], ["footer", Chrome], ["create", CreateSpace],
+      ["space-menu", SpaceMenu], ["tab-launcher", TabLauncher],
     ]).get(this.role);
     if (!Implementation) { this.error = `Unknown sidebar view: ${this.role}`; return; }
     this.implementation = new Implementation();

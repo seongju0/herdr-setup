@@ -182,7 +182,7 @@ export async function planInstall({ home = process.env.HERDR_APP_HOME || path.jo
   const requiredFiles = browser
     ? ['main.js', 'browser.js', 'tabs.js', 'context.js', 'files.js', 'file-search.js', 'changes.js', 'directories.js', 'directory-search.js', 'folder-observer.js', 'folder-picker.js', 'folder-controls.js', 'mod.json', 'LICENSE', 'LICENSE-HERDR', 'NOTICE']
     : sidebar
-      ? ['main.js', 'body.js', 'ui.js', 'chrome.js', 'agents.js', 'spaces.js', 'create.js', 'directory-search.js', 'directories.js', 'mod.json', 'LICENSE', 'LICENSE-HERDR', 'LICENSE-ICONS-LUCIDE.txt', 'NOTICE',
+      ? ['main.js', 'body.js', 'ui.js', 'chrome.js', 'agents.js', 'spaces.js', 'create.js', 'context-menu.js', 'directory-search.js', 'directories.js', 'mod.json', 'LICENSE', 'LICENSE-HERDR', 'LICENSE-ICONS-LUCIDE.txt', 'NOTICE',
         ...['search', 'sidebar', 'settings', 'plus', 'branch', 'spinner', 'check', 'pin', 'pin-off', 'clock', 'layers', 'chevron-right', 'chevron-down', 'monitor', 'server'].map(name => `icons/${name}.svg`)]
       : ['main.js', 'api.js', 'model.js', 'mod.json'];
   for (const required of requiredFiles) {

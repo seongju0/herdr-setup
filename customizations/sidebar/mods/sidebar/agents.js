@@ -3,7 +3,7 @@
 // identity, child-aware presentation, per-space ordering and focus acknowledgement.
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { run } from "herdr";
+import { run, openOverlay } from "herdr";
 import { icon, statusGlyph, unreadGlyph } from "./ui.js";
 
 const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
@@ -140,6 +140,11 @@ export default class AgentsSection {
     return h_flex().id(`ag-${a.address}`).h(46).flex_none().px(8).gap(8).rounded(8).items_center()
       .when(a.focused, el => el.bg(t.selected)).hover(el => el.bg(t.hover)).cursor_pointer()
       .tooltip(tip).accessibility_label(tip).on_click(() => run("pane.focus", { pane: a.pane }))
+      .on_mouse_down("right", (_event, cx) => {
+        cx.stop_propagation();
+        openOverlay({ mod: "menu", kind: "popup", width: 220, height: 320,
+          props: { tab: "pane", target: { pane: a.pane, terminal: a.address } } });
+      })
       .on_hover((on, cx) => { this.hovered = on ? a.address : null; cx.notify(); })
       .child(statusGlyph(t, status, 14))
       .when(model.pending.has(a.address), el => el.child(unreadGlyph(t, `unread-${a.address}`)))
