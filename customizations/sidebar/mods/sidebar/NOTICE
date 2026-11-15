@@ -5,6 +5,7 @@ https://github.com/herdrdev/herdr-app
 Herdr's source is licensed under Apache License 2.0; see LICENSE-HERDR.
 The adapted code has been modified for task-first rows grouped under spaces,
 focus-acknowledged unread attention, compact metadata, native space creation,
+a complete native tab/pane inventory, independent disclosure controls,
 and a workspace-identity rail. Directory listing retains the Herdr Files
 implementation via the repository's workspace-browser customization; bounded
 directory search and picker interaction reuse that customization's native code.

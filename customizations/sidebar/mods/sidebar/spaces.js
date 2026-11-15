@@ -291,14 +291,14 @@ export default class SpacesSection {
   }
 
   // The rows, under a header per machine once one isn't this computer.
-  grouped(t, rows, statusBySpace, pendingSpaceIds, below, openCreate, snapshotSpaces) {
+  grouped(t, rows, statusBySpace, pendingSpaceIds, below, hasContents, openCreate, snapshotSpaces) {
     const draw = r => {
       const children = below(r.w.id);
       const folded = this.foldedSpaces.has(r.w.id);
       return [v_flex().id(`space-group-${r.w.id}`).min_w(0).flex_none().mb(8)
-        .child(this.row(r, t, statusBySpace, pendingSpaceIds, children.length > 0))
+        .child(this.row(r, t, statusBySpace, pendingSpaceIds, hasContents(r.w.id)))
         .when(children.length > 0 && !folded, el => el.child(v_flex()
-          .id(`space-agents-${r.w.id}`).min_w(0).flex_none().ml(r.tree ? 48 : 30).pl(4)
+          .id(`space-contents-${r.w.id}`).min_w(0).flex_none().ml(r.tree ? 48 : 30).pl(4)
           .border_l(1).border_color(t.border).children(children)))];
     };
     const remote = [...new Set([...rows.map(r => r.w.machine).filter(Boolean), ...this.machines.map(m => m.name), ...Object.keys(this.reconnecting)])].sort();
@@ -372,7 +372,7 @@ export default class SpacesSection {
       .when(g.behind > 0, el => el.child(div().flex_none().text_color(t.muted).child(`↓${g.behind}`)));
   }
 
-  row({ w, i, g, tree, metadata, hasMetadata, height }, t, statusBySpace, pendingSpaceIds, hasAgents) {
+  row({ w, i, g, tree, metadata, hasMetadata, height }, t, statusBySpace, pendingSpaceIds, hasContents) {
     const on = w.active;
     const folded = this.foldedSpaces.has(w.id);
     const pinned = this.pinnedSpaces.has(w.id);
@@ -396,37 +396,13 @@ export default class SpacesSection {
           .when(fromIndex < i, line => line.bottom(0))
           .when(fromIndex > i, line => line.top(0)),
       ))
-      .on_mouse_down("left", () => {
-        this.pressed = w.id;
-        this.over = w.id;
-      })
-      .on_mouse_move((_e, cx) => {
-        const source = spaces().find(s => s.id === this.pressed);
-        const over = source && (source.machine ?? null) === (w.machine ?? null) ? w.id : null;
-        if (this.pressed !== null && this.over !== over) {
-          this.over = over;
-          cx.notify();
-        }
-      })
-      .on_mouse_up("left", (_e, cx) => {
-        const from = this.pressed;
-        const over = this.over;
-        this.pressed = null;
-        this.over = null;
-        if (from !== null && over === w.id && from !== w.id) {
-          const index = spaces().findIndex(s => s.id === w.id);
-          if (index !== -1) run("space.move", { id: from, index: index + 1 });
-        } else if (from === w.id) run("space.select", { id: w.id });
-        cx.notify();
-      })
       .on_mouse_down("right", () => this.menu(w))
       .child(h_flex().min_w(0).gap(6).items_center()
-        .child(div().id(`space-fold-${w.id}`).size(16).flex_none().flex().items_center().justify_center()
-          .when(hasAgents, el => el.cursor_pointer().rounded(4).hover(s => s.bg(t.hover))
-            .tooltip(`${folded ? "Expand" : "Collapse"} agents in ${w.name}`)
-            .accessibility_label(`${folded ? "Expand" : "Collapse"} agents in ${w.name}`)
+        .child(div().id(`space-fold-${w.id}`).w(24).h(24).flex_none().flex().items_center().justify_center()
+          .when(hasContents, el => el.cursor_pointer().rounded(4).hover(s => s.bg(t.hover))
+            .tooltip(`${folded ? "Expand" : "Collapse"} tabs and panes in ${w.name}`)
+            .accessibility_label(`${folded ? "Expand" : "Collapse"} tabs and panes in ${w.name}`)
             .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-            .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
             .on_click((_e, cx) => {
               cx.stop_propagation();
               folded ? this.foldedSpaces.delete(w.id) : this.foldedSpaces.add(w.id);
@@ -434,18 +410,41 @@ export default class SpacesSection {
               cx.notify();
             })
             .child(icon(folded ? "chevron-right" : "chevron-down", 12, t.muted))))
-        .when(Boolean(tree), el => el.pl(18).child(icon("branch", 13, t.dim)))
-        .when(!tree, el => el.child(avatar(t, w, 18)))
-        .child(v_flex().flex_1().min_w(0).justify_center()
-          .child(div().min_w(0).truncate().text_size(12).font_semibold().text_color(t.foreground).child(w.name))
-          .when(hasMetadata, el => el.child(this.gitTail(g, metadata, t))))
+        .child(h_flex().id(`space-select-${w.id}`).flex_1().min_w(0).gap(6).items_center()
+          .on_mouse_down("left", () => {
+            this.pressed = w.id;
+            this.over = w.id;
+          })
+          .on_mouse_move((_e, cx) => {
+            const source = spaces().find(s => s.id === this.pressed);
+            const over = source && (source.machine ?? null) === (w.machine ?? null) ? w.id : null;
+            if (this.pressed !== null && this.over !== over) {
+              this.over = over;
+              cx.notify();
+            }
+          })
+          .on_mouse_up("left", (_e, cx) => {
+            const from = this.pressed;
+            const over = this.over;
+            this.pressed = null;
+            this.over = null;
+            if (from !== null && over === w.id && from !== w.id) {
+              const index = spaces().findIndex(s => s.id === w.id);
+              if (index !== -1) run("space.move", { id: from, index: index + 1 });
+            } else if (from === w.id) run("space.select", { id: w.id });
+            cx.notify();
+          })
+          .when(Boolean(tree), el => el.pl(18).child(icon("branch", 13, t.dim)))
+          .when(!tree, el => el.child(avatar(t, w, 18)))
+          .child(v_flex().flex_1().min_w(0).justify_center()
+            .child(div().min_w(0).truncate().text_size(12).font_semibold().text_color(t.foreground).child(w.name))
+            .when(hasMetadata, el => el.child(this.gitTail(g, metadata, t)))))
         .child(div().id(`space-pin-${w.id}`).size(20).flex_none().flex().items_center().justify_center()
           .rounded(4).cursor_pointer().text_color(pinned ? t.accent : t.dim)
           .tooltip(`${pinned ? "Unpin" : "Pin"} space: ${w.name}`)
           .accessibility_label(`${pinned ? "Unpin" : "Pin"} space: ${w.name}`)
           .hover(el => el.bg(t.hover).text_color(t.foreground))
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-          .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
           .on_click((_e, cx) => {
             cx.stop_propagation();
             pinned ? this.pinnedSpaces.delete(w.id) : this.pinnedSpaces.add(w.id);
@@ -472,7 +471,7 @@ export default class SpacesSection {
       .child(statusGlyph(t, status, 10));
   }
 
-  render(_cx, { collapsed = false, statusBySpace = new Map(), pendingSpaceIds = new Set(), ordered, snapshotSpaces, below, openCreate }) {
+  render(_cx, { collapsed = false, statusBySpace = new Map(), pendingSpaceIds = new Set(), ordered, snapshotSpaces, below, hasContents, openCreate }) {
     const t = theme();
     // Body supplies the single prepared order; rendering never repeats its effects.
     if (collapsed) {
@@ -489,7 +488,7 @@ export default class SpacesSection {
       const hasMetadata = Boolean(metadata || r.g?.ahead || r.g?.behind);
       return { ...r, metadata, hasMetadata, height: hasMetadata ? 38 : r.tree ? 24 : 28 };
     });
-    const prepared = this.grouped(t, rows, statusBySpace, pendingSpaceIds, below, openCreate, snapshotSpaces);
+    const prepared = this.grouped(t, rows, statusBySpace, pendingSpaceIds, below, hasContents, openCreate, snapshotSpaces);
     return v_flex().id("spaces-section").flex_1().min_h(0).min_w(0).overflow_hidden().bg(t.chrome)
       .child(v_flex().id("spaces-scroll").flex_1().min_h(0).min_w(0).px(8).pb(6)
         .overflow_y_scrollbar().mode("always")

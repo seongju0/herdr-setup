@@ -3,12 +3,14 @@ import { v_flex, h_flex } from "gpui-base";
 import { agents, terminals, panes, spaces, focused, setAgentOrder, theme, openOverlay } from "herdr";
 import AgentsSection from "./agents.js";
 import SpacesSection from "./spaces.js";
+import SpaceContents from "./contents.js";
 import { button, isRail, sidebarWidth, toggleSidebar } from "./ui.js";
 
 export default class SidebarBody {
   init(config, cx) {
     this.agents = new AgentsSection();
     this.spaces = new SpacesSection();
+    this.contents = new SpaceContents(this.agents);
     this.agents.init(config, cx);
     this.spaces.init(config, cx);
     this.size = null;
@@ -21,6 +23,7 @@ export default class SidebarBody {
     const present = new Set(ordered.map(r => r.w.id));
     const spaceIds = [...present, ...snapshot.spaces.filter(s => !present.has(s.id)).map(s => s.id)];
     const model = this.agents.prepare(snapshot, spaceIds);
+    const contents = this.contents.prepare(snapshot, model);
     setAgentOrder(model.canonicalOrder);
     const collapsed = isRail(this.size?.width ?? sidebarWidth());
     const openCreate = machine => openOverlay({ mod: "sidebar", kind: "dialog", width: 520, height: 600, props: { view: "create", machine: machine ?? "" } });
@@ -34,7 +37,8 @@ export default class SidebarBody {
       .child(this.spaces.render(cx, {
         collapsed, ordered: this.spaces.pinnedOrder(ordered), snapshotSpaces: snapshot.spaces,
         statusBySpace: model.statusBySpace, pendingSpaceIds: model.pendingSpaceIds,
-        below: id => this.agents.rows(t, id, model), openCreate,
+        hasContents: id => (contents.bySpace.get(id)?.length ?? 0) > 0,
+        below: id => this.contents.rows(t, id, contents, model), openCreate,
       }))
       .when(collapsed, el => el.child(h_flex().h(34).flex_none().items_center().justify_center()
         .child(button(t, "sidebar-expand", "sidebar", "Expand sidebar", toggleSidebar))));

@@ -19,14 +19,12 @@ function duration(ms) {
 }
 function identity(a, space, tab) {
   const generic = value => !value || [a.program?.name, a.program?.key, a.app].filter(Boolean).some(p => value.toLowerCase() === p.toLowerCase());
-  const named = tab?.named && tab.name?.trim();
   const own = clean(a.title);
   const meaningful = !generic(own) && !/^\d+$/.test(own) && !/^[~/]|^[A-Za-z]:\\/.test((a.title ?? "").trim()) && !own.includes("@");
-  const explicit = named && !generic(named) ? named : null;
-  const fallback = !explicit && !meaningful;
-  const title = explicit || (meaningful ? own : a.program?.name || a.app || "Agent");
+  const fallback = !meaningful;
+  const title = meaningful ? own : a.program?.name || a.app || "Agent";
   const machine = space?.machine || (a.address.includes("/") ? a.address.split("/")[0] : null);
-  return { title, fallback, tab: tab?.name || a.tab, workspace: space?.name || a.space_name || "Workspace", machine };
+  return { title, fallback, tab: tab?.name?.trim(), settled: tab?.settled, workspace: space?.name || a.space_name || "Workspace", machine };
 }
 
 export default class AgentsSection {
@@ -73,8 +71,9 @@ export default class AgentsSection {
     for (const a of list) {
       const label = labels.get(a.address);
       const peers = list.filter(b => b.space === a.space && labels.get(b.address).title === label.title);
-      const secondary = [label.workspace, label.machine];
-      if (label.fallback || peers.length > 1) secondary.push(label.tab);
+      const secondary = [label.workspace, label.machine, label.tab];
+      if (!label.tab && (label.fallback || peers.length > 1)) secondary.push(a.tab);
+      if (label.settled) secondary.push("Put away");
       if (peers.filter(b => b.tab === a.tab).length > 1) secondary.push(a.address);
       label.secondary = secondary.filter(Boolean).join(" · ");
     }
@@ -110,15 +109,21 @@ export default class AgentsSection {
       included.add(a.address);
     }
     const statusBySpace = new Map(), pendingSpaceIds = new Set();
+    const statusByTab = new Map(), pendingTabIds = new Set();
     for (const a of list) {
-      if ((RANK[effective.get(a.address)] ?? 0) > (RANK[statusBySpace.get(a.space)] ?? 0)) statusBySpace.set(a.space, effective.get(a.address));
-      if (this.pending.has(a.address)) pendingSpaceIds.add(a.space);
+      const status = effective.get(a.address);
+      if ((RANK[status] ?? 0) > (RANK[statusBySpace.get(a.space)] ?? 0)) statusBySpace.set(a.space, status);
+      if ((RANK[status] ?? 0) > (RANK[statusByTab.get(a.tab)] ?? 0)) statusByTab.set(a.tab, status);
+      if (this.pending.has(a.address)) {
+        pendingSpaceIds.add(a.space);
+        pendingTabIds.add(a.tab);
+      }
     }
     const displayed = [...membersBySpace.values()].flat();
     const displayedAddresses = new Set(displayed.map(a => a.address));
     const attention = [...displayed, ...list.filter(a => !displayedAddresses.has(a.address))]
       .filter(a => this.pending.has(a.address) || effective.get(a.address) === "blocked");
-    return { membersBySpace, canonicalOrder, pending: new Set(this.pending), descendants, effective, labels, listed, statusBySpace, pendingSpaceIds, attentionCount: attention.length, attention, list, now, shown: focused?.agent };
+    return { membersBySpace, canonicalOrder, pending: new Set(this.pending), descendants, effective, labels, listed, statusBySpace, pendingSpaceIds, statusByTab, pendingTabIds, attentionCount: attention.length, attention, list, now, shown: focused?.agent };
   }
 
   subRow(t, s, model) {
@@ -133,8 +138,8 @@ export default class AgentsSection {
       .child(statusGlyph(t, status));
   }
 
-  row(t, a, model) {
-    const label = model.labels.get(a.address), subs = model.descendants.get(a.address), status = model.effective.get(a.address);
+  row(t, a, model, subs) {
+    const label = model.labels.get(a.address), status = model.effective.get(a.address);
     const tip = `${label.title} · ${label.secondary} · ${a.address} · ${a.status}${status !== a.status ? `; effective ${status} (live child status)` : ""}`;
     const fold = this.folded.has(a.address);
     return h_flex().id(`ag-${a.address}`).h(46).flex_none().px(8).gap(8).rounded(8).items_center()
@@ -160,22 +165,27 @@ export default class AgentsSection {
         .child(duration(model.now - this.changed[a.address].at)))
       .child(div().w(20).flex_none().child(div().id(`pin-${a.address}`).p(2).rounded(4)
         .when(!a.pinned && this.hovered !== a.address, el => el.opacity(0))
-        .tooltip(a.pinned ? "Unpin" : "Pin within this space").accessibility_label(a.pinned ? "Unpin agent" : "Pin agent")
+        .tooltip(a.pinned ? "Unpin agent" : "Pin agent for native navigation").accessibility_label(a.pinned ? "Unpin agent" : "Pin agent")
         .on_click((_e, cx) => { cx.stop_propagation(); run("terminal.pin", { terminal: a.address, pinned: !a.pinned }); this.hovered = null; cx.notify(); })
         .child(icon(a.pinned ? "pin-off" : "pin", 13))));
   }
 
-  rows(t, spaceId, model) {
-    return (model.membersBySpace.get(spaceId) ?? []).flatMap(a => [
-      this.row(t, a, model),
-      ...(this.folded.has(a.address) ? [] : model.descendants.get(a.address).map(s => this.subRow(t, s, model))),
-    ]);
+  rowsForPane(t, a, model, paneTerminals) {
+    const descendants = model.descendants.get(a.address);
+    const below = new Set(descendants.map(s => s.t.address));
+    // A kept reporting child owns its own inline descendants. A non-reporting
+    // child pane does not, so its still-unrepresented grandchildren stay reachable.
+    const ownedElsewhere = new Set(model.list.filter(other => below.has(other.address) && paneTerminals.has(other.address))
+      .flatMap(other => model.descendants.get(other.address).map(s => s.t.address)));
+    const children = descendants.filter(s => !paneTerminals.has(s.t.address) && !ownedElsewhere.has(s.t.address));
+    return [this.row(t, a, model, children),
+      ...(this.folded.has(a.address) ? [] : children.map(s => this.subRow(t, s, model)))];
   }
 
   header(t, model) {
     return v_flex().id("agents").flex_none().min_w(0).text_size(12)
       .child(h_flex().h(30).flex_none().px(16).gap(8).items_center()
-        .child(div().flex_1().text_size(10).text_color(t.dim).child("Agents"))
+        .child(div().flex_1().text_size(10).text_color(t.dim).child("Tabs & panes"))
         .when(model.attentionCount > 0, el => el.child(div().id("ag-attention").text_size(10).text_color(t.accent)
           .tooltip("Focus next agent needing attention").accessibility_label(`${model.attentionCount} need attention`)
           .on_click(() => { const index = model.attention.findIndex(a => a.focused); const next = model.attention[(index + 1) % model.attention.length]; run("pane.focus", { pane: next.pane }); })

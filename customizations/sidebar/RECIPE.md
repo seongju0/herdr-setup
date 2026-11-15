@@ -1,16 +1,17 @@
 # Minimal sidebar
 
-A native agent overview grouped by space, with focus-acknowledged unread attention and named space creation. Repository source is authoritative; installation and activation are separate actions.
+A complete native space/tab/pane overview with optional agent status, with focus-acknowledged unread attention and named space creation. Repository source is authoritative; installation and activation are separate actions.
 
 ## Shape
 
 ```text
 sidebar (312px, min76/max480, Geist UI)
   brand (76px, draggable) -> sidebar {view:brand}
-    32px OS clearance; logo, create +, search, collapse
+    32px OS clearance; lowercase herdr, create +, search, collapse
   sidebar-lists (flex)    -> sidebar {view:body}
-    Agents / attention header
-    one scroll list: machine > space > agent > child
+    Tabs & panes / agent-attention header
+    one scroll list: machine > space > pane > non-pane child
+      tab names are row metadata; pane-less tabs retain a selectable row
   sidebar-footer (44px)   -> sidebar {view:footer}
     Settings / update indication / Add machine
 ```
@@ -21,15 +22,16 @@ At widths below160px, show the existing workspace-avatar rail and Expand control
 
 - `main.js` is the one native View routing body/brand/footer/create. Each role owns its lifecycle; callbacks use their delivered context, not a saved `cx`.
 - `chrome.js` keeps the header minimal: lowercase `herdr`, no logo image; the rail header has only an expand control. Keep top macOS traffic-light clearance, create/search/collapse controls and footer actions. Do not rename the application or edit its bundle icon.
-- `body.js` captures native state, prepares space ordering once, asks Agents for its model and registers stable native next/previous order in expanded and rail modes.
-- `spaces.js` retains Git/cache/watch, automatic worktree ordering, machine loading/offline/rebuilt UI and explicit reconnect, menus, drag ordering and rail navigation. Expanded space rows have agent rows directly beneath them; no lower Spaces section or height allocation. Independent space chevrons fold agents, with inset guides and a slim active-space accent distinct from the focused-agent fill.
-- `spaces.js.pinnedOrder(rows)` applies explicit space-pin priority within each machine. Keep worktree families together (any pinned member promotes the family), preserving native relative order within pinned and unpinned groups. Expanded headers expose independent pin/unpin controls that stop mouse-down/up/click propagation; persist full native IDs at `herdr-setup.spaces.pinned`, separate from agent pins. Rail consumes the same display priority. Do not issue native reorder commands for pins or feed display priority into agent keyboard traversal. Old recency storage is ignored and left untouched; no dwell tracking, window-return transitions or automatic activity-based order.
+- `body.js` captures native state once, prepares space ordering once, asks Agents for its genuine-agent model and Contents for the native tab/pane inventory, and registers stable agent next/previous order in expanded and rail modes.
+- `contents.js` owns space → native tab → native pane membership and tab/neutral-pane rendering. Shells, startup agents, mod panes (`terminal:null`), put-away tabs and tabs awaiting pane metadata stay reachable. Join agents only by full pane ID for optional decoration; never fabricate agents or report state. Tab click/menu and pane click/menu use explicit full native IDs. Native status is shown only when available; neutral panes have no observed age or unread.
+- `spaces.js` retains Git/cache/watch, automatic worktree ordering, machine loading/offline/rebuilt UI and explicit reconnect, menus, drag ordering and rail navigation. Expanded spaces have pane rows directly beneath them, with tab names as metadata and standalone rows only for tabs awaiting panes; no lower Spaces section or height allocation. Independent 24px space chevrons fold all contents whenever tabs exist, not only reporting agents. Disclosure/pin controls are siblings of the select/drag hit region; do not suppress their mouse-up while depending on click. Retain saved `spaces.folded`, inset guides and the slim active-space accent distinct from focused-pane fill.
+- `spaces.js.pinnedOrder(rows)` applies explicit space-pin priority within each machine. Keep worktree families together (any pinned member promotes the family), preserving native relative order within pinned and unpinned groups. Expanded headers expose independent pin/unpin controls outside the selection/drag region; persist full native IDs at `herdr-setup.spaces.pinned`, separate from agent pins. Rail consumes the same display priority. Do not issue native reorder commands for pins or feed display priority into agent keyboard traversal. Old recency storage is ignored and left untouched; no dwell tracking, window-return transitions or automatic activity-based order.
 - `agents.js` owns task identity, live child-aware status, per-instance unread observations and agent rows. All spaces remain headers even without reporting agents. Pins stay within each space. Right mouse-down opens the shipped native pane menu with the exact pane and terminal address, stopping propagation without focusing/acknowledging the row; Close pane stays native, not tab-wide or process-killing logic.
 - `context-menu.js` owns the space-menu/tab-launcher popup roles. Space headers and rail use the same clicked-space target; preserve native rename/Git/worktree/close actions and add New tab / agent…. Query installed launchers on the clicked machine; dispatch only an explicitly chosen native tab.new with that space ID and program-owned argv (Terminal omits argv). Never select/focus a space to fake targeting or fall back to the current space when a target disappears. Keep native-style popup keyboard navigation and explicit loading/failure states. Native commands own confirmation/failure reporting; no dispatch during discovery/render.
-- Display tiers: blocked, unread/done, pinned, working, idle. Native order breaks ties. Keyboard next/previous deliberately uses stable space/pin/native order instead of these changing tiers.
+- Display order: native tabs, then native panes. Status/focus/agent pins never shuffle the tree. Keep the genuine-agent attention jump and derived space status/unread summaries; canonical agent next/previous still uses stable space/pin/native order. Agent pin data is preserved, but pins do not promote visual pane rows.
 - Unread is a separate marker, never a replacement live status. Observed new Done or effective Blocked arms it; native root focus acknowledges it. Native idle or later working does not erase unread while unfocused. Focus wins in the same snapshot; a focused completion is already seen. Blocking remains urgent after acknowledgement. No seq-based completion counter, persisted history or transcript scan.
 - Root rows retain `pane.focus`, children `terminal.peek`, pins `terminal.pin`. Fold/pin do not acknowledge by themselves. Native focus resulting from any command does.
-- Keep explicit tab/own-title/program identity, duplicate disambiguation, exact machine-qualified addresses and normalized observed-state ages. Child error raises parent blocking; child done remains idle; count roots once.
+- Keep own-title/program identity at agent panes and tab names (when present) in muted row metadata, including neutral panes and put-away labels. Populated tabs have no sidebar header; their tab-level menu remains in the native top bar. Preserve duplicate disambiguation, exact machine-qualified addresses and normalized genuine-agent observed-state ages. Inline live children exclude represented model panes; a kept reporting child owns its own descendants to avoid duplicate rows. Child error raises parent blocking; child done remains idle; count roots once.
 
 ## Creation
 

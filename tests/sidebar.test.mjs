@@ -17,6 +17,9 @@ async function nativeHost(fixture = {}) {
     spaces: [{ id: 's', name: 'Synthetic workspace', folder: '/repo', active: true, tabs: [{ id: 'tab', name: '1', named: false }] }],
     machines: [], inventory: [], ...fixture,
   };
+  // Coherent native snapshots for agent-only scenarios; explicit mixed panes stay caller-owned.
+  if (!Object.hasOwn(fixture, 'panes')) state.panes = state.agents.map(paneForAgent);
+  for (const s of state.spaces) s.tabs = (s.tabs ?? []).map((tab, i) => ({ index: i + 1, ...tab }));
   function element(asset) {
     const node = { children: [], asset, styles: {} };
     const add = child => { if (child != null) node.children.push(child?.node ?? child); };
@@ -162,6 +165,7 @@ async function nativeHost(fixture = {}) {
   };
 }
 
+const paneForAgent = a => ({ pane: a.pane, tab: a.tab, terminal: a.address, title: a.title || '', program: a.program, status: a.status, focused: a.focused, cwd: '/repo' });
 const agent = (address, status, extra = {}) => ({ address, status, pane: `pane-${address}`, space: 's', tab: 'tab', space_name: 'Synthetic workspace', program: { name: 'Pi', key: 'pi' }, seq: 1, ...extra });
 
 test('U1 unified space hierarchy retains identity, pins, child urgency and native addresses', async () => {
@@ -187,12 +191,14 @@ test('U1 unified space hierarchy retains identity, pins, child urgency and nativ
   assert.match(host.text('ag-a'), /Fix retry logic.*Synthetic workspace.*1.*a/);
   assert.match(host.text('ag-b'), /Check release.*Synthetic workspace/);
   assert.match(host.text('ag-generic'), /Pi.*Synthetic workspace.*1/);
-  assert.match(host.text('ag-c'), /Ship synthetic task/);
-  assert.doesNotMatch(host.text('ag-c'), /Different title/);
-  assert.ok(position('space-s') < position('ag-done'));
+  assert.equal(host.node('tab-named'), undefined, 'Populated tabs do not add a heading');
+  assert.match(host.text('ag-c'), /Different title.*Ship synthetic task/, 'Named tab remains visible even for a unique agent title');
+  assert.equal(host.nodes().filter(n => n?.id?.startsWith('tab-')).length, 0);
+  assert.ok(host.node('space-contents-s').children.some(n => n.id === 'ag-c'), 'Agent rows sit directly under the space');
+  assert.ok(position('space-s') < position('ag-a'));
+  assert.ok(position('ag-a') < position('ag-done'), 'Native panes do not move for attention');
   assert.ok(position('ag-done') < position('ag-pinned'));
-  assert.ok(position('ag-pinned') < position('ag-a'));
-  assert.ok(position('ag-a') < position('ag-c'));
+  assert.ok(position('ag-pinned') < position('ag-c'), 'Named second tab remains after first tab');
   assert.ok(position('ag-c') < position('space-shell'));
   assert.ok(position('space-shell') < position('space-remote/s'));
   assert.ok(position('space-remote/s') < position('ag-remote/root'));
@@ -226,9 +232,10 @@ test('U1 unified space hierarchy retains identity, pins, child urgency and nativ
   const canonical = [...host.order()], callsBeforeFold = host.state.calls.length;
   const foldControl = host.node('space-fold-s'), stoppedBeforeFold = host.state.stopped;
   foldControl.on_mouse_down_left({}, { stop_propagation() { host.state.stopped++; } });
-  foldControl.on_mouse_up_left({}, { stop_propagation() { host.state.stopped++; } });
+  assert.equal(foldControl.on_mouse_up_left, undefined, 'Do not intercept release before native click');
+  assert.equal(host.node('space-s').on_mouse_up_left, undefined, 'Selection is a sibling, not a fold ancestor');
   host.click('space-fold-s');
-  assert.equal(host.state.stopped, stoppedBeforeFold + 3);
+  assert.equal(host.state.stopped, stoppedBeforeFold + 2);
   assert.equal(host.state.calls.length, callsBeforeFold);
   assert.equal(host.node('ag-done'), undefined);
   assert.ok(host.node('space-s')); assert.ok(host.node('ag-remote/root'));
@@ -237,19 +244,98 @@ test('U1 unified space hierarchy retains identity, pins, child urgency and nativ
   assert.deepEqual(JSON.parse(host.storage.get('spaces.folded')), ['s']);
   host.click('space-fold-s');
   assert.ok(host.node('ag-done')); assert.ok(host.node('unread-done'));
-  assert.equal(host.node('space-agents-s').styles.ml, 30);
+  assert.equal(host.node('space-contents-s').styles.ml, 30);
   host.focus('done');
   assert.equal(host.node('ag-done').styles.bg, '#333333');
   assert.equal(host.node('space-s').styles.bg, undefined, 'Space and agent must not share selected fill');
   host.focus('remote/root'); host.click('space-pin-remote/s');
   const focusedRows = host.rowIds();
   assert.ok(focusedRows.indexOf('space-s') < focusedRows.indexOf('space-remote/s'), 'Pinned remote spaces cannot escape their machine group');
-  const shell = host.node('space-shell'); shell.on_mouse_down_left({}, {});
+  const shell = host.node('space-select-shell'); shell.on_mouse_down_left({}, {});
   shell.on_mouse_up_left({}, { notify() {} });
   assert.equal(host.state.calls.at(-1).command, 'space.select');
   assert.equal(host.state.calls.at(-1).args.id, 'shell');
   assert.deepEqual([...host.order()].sort(), host.state.agents.map(a => a.address).sort());
   assert.equal(new Set(host.order()).size, host.state.agents.length);
+
+  // Same routed flow, with complete native inventory independent of status reports.
+  const root = agent('main', 'working', { tab: 'work', pane: 'pm' });
+  const inventory = await nativeHost({
+    spaces: [
+      { id: 's', name: 'Mixed panes', folder: '/repo', tabs: [
+        { id: 'work', name: 'Work', named: true },
+        { id: 'put-away', name: 'Saved', named: true, settled: true },
+        { id: 'empty', name: 'Awaiting panes', named: true },
+      ] },
+      { id: 'remote/s', name: 'Shell only', machine: 'remote', folder: '/srv', tabs: [{ id: 'remote/tab', name: 'Remote terminal', named: true }] },
+    ],
+    agents: [root],
+    panes: [paneForAgent(root),
+      { pane: 'psh', terminal: 'sh', tab: 'work', title: 'Shell', status: null },
+      { pane: 'ped', terminal: null, mod: 'editor', tab: 'work', title: 'Editor' },
+      { pane: 'pk', terminal: 'kept', tab: 'put-away', title: 'Kept child' },
+      { pane: 'remote/p', terminal: 'remote/sh', tab: 'remote/tab', title: 'Remote shell' },
+    ],
+    terminals: [
+      { address: 'kept', parent: 'main', state: 'live', status: 'working' },
+      { address: 'peek', parent: 'main', state: 'live', status: 'working' },
+      { address: 'grand', parent: 'kept', state: 'live', status: 'working' },
+    ],
+  });
+  assert.ok(inventory.node('tab-empty'), 'A tab is reachable before pane metadata arrives');
+  assert.equal(inventory.node('tab-put-away'), undefined);
+  assert.equal(inventory.node('tab-work'), undefined);
+  assert.match(inventory.text('pane-pk'), /Kept child.*Saved.*Put away/);
+  assert.match(inventory.text('ag-main'), /Pi.*Work/);
+  assert.match(inventory.text('pane-psh'), /Shell.*Work/);
+  assert.match(inventory.text('pane-ped'), /Editor.*Work/);
+  const workTab = inventory.state.spaces[0].tabs[0];
+  workTab.name = 'Renamed work'; inventory.render();
+  assert.match(inventory.text('ag-main'), /Renamed work/);
+  assert.match(inventory.text('pane-ped'), /Renamed work/);
+  workTab.name = ''; inventory.render();
+  assert.doesNotMatch(inventory.text('ag-main'), /Renamed work|undefined/);
+  assert.equal(inventory.text('pane-ped').trim(), 'Editor', 'Missing tab name adds no empty metadata');
+  workTab.name = 'Work'; inventory.render();
+  assert.equal(inventory.node('sub-kept'), undefined, 'Kept child is represented by its actual pane');
+  assert.ok(inventory.node('sub-grand'), 'A non-reporting kept pane must not hide its grandchild');
+  inventory.click('sub-peek');
+  assert.equal(inventory.state.calls.at(-1).command, 'terminal.peek');
+  inventory.click('tab-empty');
+  assert.equal(inventory.state.calls.at(-1).args.id, 'empty');
+  inventory.click('pane-ped');
+  assert.equal(inventory.state.calls.at(-1).args.pane, 'ped');
+  const nativeEffects = inventory.state.calls.length;
+  inventory.node('pane-ped').on_mouse_down_right({}, { stop_propagation() {} });
+  assert.deepEqual(JSON.parse(JSON.stringify(inventory.state.overlays.at(-1).props)), { tab: 'pane', target: { pane: 'ped' } });
+  inventory.node('tab-empty').on_mouse_down_right({}, { stop_propagation() {} });
+  assert.deepEqual(JSON.parse(JSON.stringify(inventory.state.overlays.at(-1).props)), { tab: 'tab', target: { id: 'empty', space: 's' } });
+  assert.equal(inventory.state.calls.length, nativeEffects, 'Menus do not focus or select');
+
+  const beforeFold = inventory.state.calls.length;
+  inventory.click('space-fold-remote/s');
+  assert.equal(inventory.node('pane-remote/p'), undefined);
+  assert.ok(inventory.node('space-remote/s'));
+  inventory.mount('body'); inventory.render();
+  assert.equal(inventory.node('pane-remote/p'), undefined, 'Saved fold is independent of agent reporting');
+  inventory.click('space-fold-remote/s');
+  assert.ok(inventory.node('pane-remote/p'), 'A shell-only space can reopen');
+  assert.equal(inventory.state.calls.length, beforeFold, 'Disclosure has no native effects');
+  inventory.click('pane-remote/p');
+  assert.equal(inventory.state.calls.at(-1).args.pane, 'remote/p');
+
+  const tabsBefore = inventory.nodes().filter(n => n?.id?.startsWith('tab-')).map(n => n.id);
+  const reportingShell = agent('sh', 'done', { tab: 'work', pane: 'psh', title: 'Shell now reports' });
+  const kept = agent('kept', 'working', { tab: 'put-away', pane: 'pk' });
+  inventory.state.agents = [root, reportingShell, kept]; inventory.render();
+  assert.ok(inventory.node('ag-sh')); assert.equal(inventory.node('pane-psh'), undefined);
+  assert.ok(inventory.node('unread-sh'));
+  assert.ok(inventory.node('space-unread-s'));
+  assert.match(inventory.text('ag-kept'), /Saved.*Put away/, 'Put-away metadata survives agent decoration');
+  assert.equal(inventory.nodes().filter(n => n?.id === 'sub-grand').length, 1, 'Reporting kept child owns its descendants once');
+  assert.deepEqual(inventory.nodes().filter(n => n?.id?.startsWith('tab-')).map(n => n.id).filter(id => !id.startsWith('tab-unread-')), tabsBefore);
+  inventory.state.agents = [root]; inventory.render();
+  assert.ok(inventory.node('pane-psh')); assert.equal(inventory.node('ag-sh'), undefined);
 });
 
 test('U2 focus acknowledges unread without masking live blocking or reordering native traversal', async () => {
@@ -311,7 +397,11 @@ test('U3 unified scroll, worktree/machine controls and rail retain native naviga
       agent('tree', 'idle', { space: 's1', tab: 'tab1' }),
       agent('other', 'idle', { space: 's2', tab: 'tab2' }),
     ],
-    panes: [{ pane: 'p0', tab: 'tab0', cwd: '/repo', terminal: 'a', program: { agent: true }, status: 'done' }],
+    panes: [
+      paneForAgent(agent('a', 'done', { space: 's0', tab: 'tab0' })),
+      { ...paneForAgent(agent('tree', 'idle', { tab: 'tab1' })), cwd: '/worktree' },
+      paneForAgent(agent('other', 'idle', { tab: 'tab2' })),
+    ],
   });
   await host.tick(250); host.measure(312, 300);
   const notify = host.state.notifications;
@@ -324,7 +414,7 @@ test('U3 unified scroll, worktree/machine controls and rail retain native naviga
   assert.equal(host.node('ag-a').styles.h, 46);
   assert.equal(host.nodes().find(n => n?.children?.includes('Sizing task')).styles.text_size, 12);
   assert.match(host.text('space-s0'), /feature\/synthetic-long-branch.*↑2.*↓3/);
-  assert.ok(host.node('space-s1').children.some(n => n?.children?.some(c => c?.asset === 'mods/sidebar/icons/branch.svg')));
+  assert.ok(host.node('space-select-s1').children.some(c => c?.asset === 'mods/sidebar/icons/branch.svg'));
   assert.match(host.text('machine-loading-loading'), /Loading/);
   assert.match(host.text('machine-offline'), /unreachable/);
   assert.match(host.text('machine-rebuilt'), /Connect/);
@@ -354,9 +444,9 @@ test('U3 unified scroll, worktree/machine controls and rail retain native naviga
   const beforePinCalls = host.state.calls.length, stoppedBeforePin = host.state.stopped;
   const control = host.node('space-pin-s2');
   control.on_mouse_down_left({}, { stop_propagation() { host.state.stopped++; } });
-  control.on_mouse_up_left({}, { stop_propagation() { host.state.stopped++; } });
+  assert.equal(control.on_mouse_up_left, undefined);
   host.click('space-pin-s2');
-  assert.equal(host.state.stopped, stoppedBeforePin + 3);
+  assert.equal(host.state.stopped, stoppedBeforePin + 2);
   assert.equal(host.state.calls.length, beforePinCalls, 'Space pin must not select, focus, drag or pin an agent');
   assert.equal(host.state.focus.space, 's2');
   assert.equal(host.node('ag-other'), undefined, 'Pinning preserves the space fold');
@@ -403,6 +493,14 @@ test('U3 unified scroll, worktree/machine controls and rail retain native naviga
   assert.ok(host.state.calls.filter(c => c.process).every(c => c.process === 'git'));
   assert.ok(host.state.calls.some(c => c.watch === '/repo/.git'));
   assert.ok(host.state.calls.every(c => !c.hc || c.hc[1] === 'ls'));
+  host.measure(312, 300);
+  assert.equal(host.node('space-fold-s0').styles.w, 24);
+  assert.equal(host.node('space-s0').on_mouse_down_left, undefined);
+  const source = host.node('space-select-s0'), target = host.node('space-select-s2');
+  source.on_mouse_down_left({}, {});
+  target.on_mouse_move({}, { notify() {} });
+  target.on_mouse_up_left({}, { notify() {} });
+  assert.deepEqual(JSON.parse(JSON.stringify(host.state.calls.at(-1))), { command: 'space.move', args: { id: 's0', index: 3 } });
 });
 
 test('U5 space context actions and tab launcher retain the clicked machine/space rather than focus', async () => {
